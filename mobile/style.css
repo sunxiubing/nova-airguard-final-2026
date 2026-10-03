@@ -1,0 +1,619 @@
+/* ============================================================
+   AirGuard 校园多区域空气质量与人流监测预警协同系统 · 移动巡检端
+   手机竖屏 / 轻量化 / 快速读取结论
+   配色与 Web 大屏保持同一套设计令牌：
+   - 状态色为保留色，仅表示 正常 / 轻度污染 / 通风不足风险 / 重度污染
+   - 状态色永远不单独承载语义，一律配「图形符号 + 中文结论文字」
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* 画布与油墨 */
+  --plane:      #eef2f8;
+  --surface:    #ffffff;
+  --surface-2:  #f7f9fc;
+  --ink-1:      #0b0b0b;
+  --ink-2:      #52514e;
+  --ink-muted:  #6b6a66;   /* 比大屏略深，保证手机小字号下的正文对比度 */
+  --border:     rgba(11, 11, 11, .10);
+
+  --brand:      #2a78d6;
+  --radius:     16px;
+  --radius-sm:  10px;
+  --shadow:     0 1px 2px rgba(11, 11, 11, .05), 0 6px 18px rgba(11, 11, 11, .06);
+
+  --font: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 手机端横向留白，自动避开刘海与圆角 */
+  --pad-x: max(14px, env(safe-area-inset-left), env(safe-area-inset-right));
+}
+
+/* ------------------------------------------------------------
+   状态色令牌：卡片侧边色条 / 结论胶囊 / 告警标签共用
+   --level-color 用于色条与圆点（图形通道）
+   --level-tint  用于浅色底
+   --level-ink   用于文字（深色变体，保证 ≥4.5:1 对比度）
+   ------------------------------------------------------------ */
+[data-level="good"]     { --level-color: #0ca30c; --level-tint: #f1faf1; --level-ink: #056b05; }
+[data-level="warning"]  { --level-color: #fab219; --level-tint: #fff9ec; --level-ink: #7d5800; }
+[data-level="serious"]  { --level-color: #ec835a; --level-tint: #fff6f1; --level-ink: #99400f; }
+[data-level="critical"] { --level-color: #d03b3b; --level-tint: #fdf3f3; --level-ink: #a31414; }
+[data-level="idle"]     { --level-color: #c3c2b7; --level-tint: #f7f9fc; --level-ink: #6b6a66; }
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0 auto;
+  max-width: 520px;              /* 桌面浏览器调试时也保持手机版式 */
+  min-height: 100vh;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-1);
+  background: var(--plane);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+code { font-family: var(--mono); }
+
+/* 视觉隐藏但对读屏可见 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ============================ 顶部标题栏 ============================ */
+
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: calc(10px + env(safe-area-inset-top)) var(--pad-x) 9px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, var(--brand), #184f95);
+  position: relative;
+}
+.brand-mark::after {
+  content: "";
+  position: absolute; inset: 9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  transform: rotate(45deg);
+}
+
+.app-bar-text { flex: 1; min-width: 0; }
+.app-bar-text h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: .2px;
+}
+.app-bar-sub {
+  margin: 1px 0 0;
+  font-size: 11px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- MQTT 连接状态徽标 --- */
+.conn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--level-ink);
+  background: var(--level-tint);
+  border: 1px solid var(--border);
+}
+.conn-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--level-color, var(--ink-muted));
+}
+
+.app-bar[data-conn="connecting"] .conn { --level-color: #fab219; --level-tint: #fff9ec; --level-ink: #7d5800; }
+.app-bar[data-conn="connected"]  .conn { --level-color: #0ca30c; --level-tint: #f1faf1; --level-ink: #056b05; }
+.app-bar[data-conn="error"]      .conn { --level-color: #d03b3b; --level-tint: #fdf3f3; --level-ink: #a31414; }
+
+/* 已连接时圆点做呼吸动画，方便巡检人员一眼确认链路存活 */
+.app-bar[data-conn="connected"] .conn-dot { animation: pulse 2.4s ease-out infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(12, 163, 12, .45); }
+  70%  { box-shadow: 0 0 0 6px rgba(12, 163, 12, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(12, 163, 12, 0); }
+}
+
+.conn-detail {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+/* ====================== 持续风险与优先关注 ====================== */
+
+/* 橙色是「优先关注」专用强调色（与 Web 大屏 / 报告 / 地图3D 同一支），
+   不参与状态色体系：状态色只表示环境结论等级 */
+.priority-banner {
+  margin: 12px var(--pad-x) 0;
+  padding: 11px 13px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid #c2410c;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.priority-banner[data-focus="no"] { border-left-color: var(--border); }
+
+.priority-tag {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  color: var(--ink-muted);
+}
+
+.priority-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.priority-zone {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.priority-total {
+  margin: 0 0 0 auto;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.priority-total[hidden] { display: none; }
+.priority-total b {
+  font-size: 26px;
+  font-weight: 700;
+  color: #c2410c;
+  font-variant-numeric: tabular-nums;
+}
+.priority-total .unit { margin-left: 2px; }
+.priority-banner[data-focus="no"] .priority-total b { color: var(--ink-2); }
+
+.priority-split {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.priority-reason {
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.priority-reason[hidden] { display: none; }
+
+/* 裁决理由：解释「凭什么是它」，比构成说明再低一档 */
+.priority-verdict {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.priority-verdict[hidden] { display: none; }
+.priority-verdict::before {
+  content: '裁决 · ';
+  color: #c2410c;
+  font-weight: 650;
+}
+
+/* ============================ 全局告警横幅 ============================ */
+
+.alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px var(--pad-x) 0;
+  padding: 12px 13px;
+  border-radius: var(--radius);
+  background: var(--level-tint);
+  border: 1px solid var(--level-color);
+  border-left-width: 5px;
+}
+/* display:flex 会盖过 [hidden] 的默认 display:none，这里显式还原 */
+.alert-banner[hidden] { display: none; }
+
+.alert-icon {
+  flex: none;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.alert-main { min-width: 0; }
+
+.alert-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  color: var(--level-ink);
+}
+
+.alert-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--level-ink);
+  background: var(--surface);
+  border: 1px solid var(--level-color);
+}
+
+/* --- 全部正常时的轻量提示 --- */
+.all-clear {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px var(--pad-x) 0;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: #056b05;
+  background: #f1faf1;
+  border: 1px solid rgba(12, 163, 12, .35);
+}
+.all-clear[hidden] { display: none; }
+
+/* ============================ 区域巡检卡片 ============================ */
+
+/* 纵向 flex + order：异常区域自动置顶，平级时保持固定的地理顺序 */
+.zone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px var(--pad-x) 0;
+}
+
+.zone-card {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--level-tint);
+  box-shadow: var(--shadow);
+}
+
+/* 侧边颜色标识：正常=绿 轻度污染=黄 通风不足风险=橙 重度污染=红 */
+.zone-card::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  background: var(--level-color);
+}
+
+/* 异常区域置顶；order 相同则回落到 DOM 顺序（宿舍区 → 教学区 → 食堂区） */
+.zone-card[data-rank="3"]    { order: 0; }
+.zone-card[data-rank="2"]    { order: 1; }
+.zone-card[data-rank="1"]    { order: 2; }
+.zone-card[data-rank="0"]    { order: 3; }
+.zone-card[data-rank="none"] { order: 4; }
+
+.zone-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 13px 13px;
+}
+
+/* --- 卡片头：区域名 + 环境结论胶囊 --- */
+.zone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zone-title {
+  display: flex;
+  flex-wrap: wrap;        /* 窄屏放不下「区域名 + 编号 + 缓存标记」时整块换行，不挤压状态胶囊 */
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* 缓存读数标记：与 Web 大屏、三维沙盘的「本地缓存」同一含义。
+   压在区域名后面而不是替换状态胶囊——颜色仍然只表示结论等级 */
+.cached-pill {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  letter-spacing: .3px;
+  color: var(--ink-muted);
+  background: rgba(0, 0, 0, .05);
+  border: 1px dashed rgba(0, 0, 0, .22);
+}
+
+.zone-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: .3px;
+}
+
+.zone-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .4px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+}
+
+.status-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--level-ink);
+  background: var(--surface);
+  border: 1px solid var(--level-color);
+}
+.pill-icon { font-size: 11px; line-height: 1; color: var(--level-color); }
+
+/* 尚未上报数据的区域不显示结论胶囊，避免出现一个空边框 */
+.zone-card[data-level="idle"] .status-pill { display: none; }
+
+/* --- 环境监测数据：pm25 / co2 --- */
+.metric-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.metric {
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.metric-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  color: var(--ink-muted);
+}
+
+.metric-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+
+.metric-value b {
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -.5px;
+}
+
+.metric-unit {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* --- 结论区：环境结论 / 感知结论 并排，更新时间单独一行 --- */
+/* 两个结论是巡检人员要一眼读取的核心信息，并排可省下约 45px 卡片高度 */
+.conclusion { margin-top: 11px; }
+
+.conclusion-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.conclusion-cell {
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.conclusion-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  color: var(--ink-muted);
+}
+
+.conclusion-value {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+/* 环境结论用状态深色，配左侧圆点做双重编码（颜色不单独承载语义） */
+.v-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--level-ink);
+}
+.v-status::before {
+  content: "";
+  flex: none;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--level-color);
+}
+
+.conclusion-update {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 2px 0;
+}
+
+.v-time {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  word-break: break-word;
+}
+
+/* --- 必要处置操作 --- */
+.action-box {
+  margin-top: 11px;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border-left: 3px solid var(--level-color);
+}
+.action-box[hidden] { display: none; }
+
+.action-title {
+  margin: 0 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  color: var(--ink-muted);
+}
+
+.action-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-1);
+}
+
+.action-list li { margin: 0; }
+.action-list li + li { margin-top: 2px; }
+
+/* ============================ 空状态 / 页脚 ============================ */
+
+.empty-hint {
+  margin: 20px var(--pad-x) 0;
+  padding: 26px 16px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--border);
+  font-size: 14px;
+  text-align: center;
+  color: var(--ink-muted);
+}
+.empty-hint[hidden] { display: none; }
+
+.app-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  margin: 16px var(--pad-x) 0;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+.app-foot b { color: var(--ink-2); }
+
+/* 只作用于链路自检那一行，不要波及恢复说明与按钮 */
+.foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  width: 100%;
+  margin: 0;
+}
+
+/* 恢复本地历史后的来源说明，独占一行，不与链路自检挤在一起 */
+.foot-note {
+  width: 100%;
+  margin: 0;
+  text-align: center;
+  color: #7a5c28;      /* 对 #eef2f8 底 5.5:1；再浅一档就跌破 4.5:1 小字底线 */
+}
+
+/* 清空本地记录：危险操作配危险色，但只做次要按钮的量级 */
+.clear-btn {
+  flex: none;
+  margin-top: 4px;
+  padding: 7px 26px;
+  font: inherit;
+  font-size: 12px;
+  color: #a83232;                        /* 对按钮底色 5.9:1 */
+  background: rgba(208, 59, 59, .07);
+  border: 1px solid rgba(208, 59, 59, .35);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.clear-btn:hover { background: rgba(208, 59, 59, .14); }
+
+.clear-btn:focus-visible {
+  outline: 2px solid #2a78d6;
+  outline-offset: 2px;
+}
+
+/* ============================ 小屏微调 ============================ */
+
+@media (max-width: 340px) {
+  .metric-value b { font-size: 24px; }
+  .zone-name { font-size: 16px; }
+  .app-bar-sub { display: none; }
+}
+
+/* 尊重系统「减少动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .app-bar[data-conn="connected"] .conn-dot { animation: none; }
+}

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>校园多区域空气质量与人流监测预警协同系统 AirGuard</title>
+
+<!--
+  ============================================================================
+  AirGuard 校园多区域空气质量与人流监测预警协同系统 · 三维数字孪生沙盘
+  ============================================================================
+  数据链路：
+      感知采集节点 → MQTT/JSON → 共享实时状态 → Web 监测大屏 / 移动巡检端
+                                                → 三维沙盘（本页面）
+
+  与 Web 大屏、微信小程序共用同一条实时数据流：
+      订阅主题  ws://127.0.0.1:8085   Airguard/+/data
+      报文格式  { zoneId, pm25, co2, crowdLevel, status, time }
+
+  两套彼此独立的可视化组件（互不混淆）：
+      ① 悬浮发光标牌   → 区域空气质量风险（绿 / 黄 / 橙 / 红）
+      ② 楼层环绕灯带   → 整栋楼宇人流密度（浅蓝 / 深蓝 / 深绿 / 深紫）
+                         同一栋楼的每一层灯带颜色完全一致
+
+  楼宇本体为固定的浅灰白实体，不参与任何状态编码。
+  本页面不含任何写死的示例数据：启动时标牌为待机态，只接收 MQTT 推送。
+  ============================================================================
+-->
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="viz-root">
+
+<!-- ==================== 三维沙盘画布 ==================== -->
+<div id="stage" class="stage" aria-label="校园三维数字孪生沙盘"></div>
+
+<!-- ==================== 楼宇悬浮标签层（由 main.js 注入） ==================== -->
+<div id="tagLayer" class="tag-layer" aria-hidden="false"></div>
+
+<!-- ==================== 覆盖层 ==================== -->
+<div class="overlay">
+
+  <!-- ---------- 顶部：标题 / 状态栏 ---------- -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <h1>校园多区域空气质量与人流监测预警协同系统 <span class="brand-en">AirGuard</span></h1>
+        <p class="brand-sub">三维数字孪生沙盘 · 等距视角实时态势</p>
+      </div>
+    </div>
+
+    <div class="statusbar" id="statusbar" data-conn="connecting">
+      <div class="status-item">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span class="status-key">MQTT</span>
+        <span class="status-val" id="connText">连接中…</span>
+      </div>
+      <div class="status-item">
+        <span class="status-key">Broker</span>
+        <code class="status-code" id="brokerUrl">ws://127.0.0.1:8085</code>
+      </div>
+      <div class="status-item">
+        <span class="status-key">最后更新时间</span>
+        <span class="status-val status-time" id="clockTime">--:--:--</span>
+      </div>
+      <div class="status-item status-item--action">
+        <button class="clear-btn" id="clearHistory" type="button"
+                title="清除浏览器本地保存的全部历史记录，并把沙盘恢复到等待状态"
+                >清空本地记录</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ---------- 顶部居中叠放：优先关注横幅 + 全局告警横幅 ----------
+       两条横幅共用一条竖列，谁的高度都不会压到对方；任一为空时自动收拢 -->
+  <div class="top-stack" id="topStack">
+
+    <!-- 总分 = 环境异常分 + 人流分，取最高者为当前优先关注；
+         规则与 web 大屏 / 移动端 / 报告一致。
+         无读数时整块隐藏；全员 0 分时标题变「持续风险」并显示「暂无优先关注」 -->
+    <div class="priority-banner" id="priorityBanner" data-focus="no" hidden>
+      <p class="priority-tag" id="priorityTag">当前优先关注</p>
+      <div class="priority-head">
+        <p class="priority-zone" id="priorityZone"></p>
+        <p class="priority-total" id="priorityTotalRow">
+          <b id="priorityTotal">0</b><span class="priority-unit">分</span>
+        </p>
+      </div>
+      <p class="priority-split" id="prioritySplit"></p>
+      <p class="priority-reason" id="priorityReason" hidden></p>
+      <!-- 裁决理由：同分时说明是拿什么赢的（持续更久 / 环境分更高 / 人流等级更高） -->
+      <p class="priority-verdict" id="priorityVerdict" hidden></p>
+    </div>
+
+    <!-- 全局告警横幅：任意区域结论不是「正常」时展示 -->
+    <div class="alert-banner" id="alertBanner" role="alert" hidden>
+      <span class="alert-icon" aria-hidden="true">⚠️</span>
+      <div class="alert-main">
+        <p class="alert-title">重点关注区域</p>
+        <ul class="alert-chips" id="alertChips"></ul>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ---------- 左下角：图例 ---------- -->
+  <aside class="legend" aria-label="色彩图例">
+    <p class="panel-title">图例</p>
+
+    <p class="legend-group-label">
+      <span class="legend-swatch-shape legend-swatch-shape--sign" aria-hidden="true"></span>
+      空气质量 · 悬浮标牌
+    </p>
+    <ul class="legend-row" id="legendAir"></ul>
+
+    <p class="legend-group-label">
+      <span class="legend-swatch-shape legend-swatch-shape--band" aria-hidden="true"></span>
+      人流密度 · 楼层环绕灯带
+    </p>
+    <ul class="legend-row" id="legendFlow"></ul>
+
+    <p class="legend-note" id="legendNote">等待 MQTT 数据…</p>
+  </aside>
+
+  <!-- ---------- 右下角：区域实时监测 ---------- -->
+  <aside class="data-panel" aria-label="区域实时监测">
+    <p class="panel-title">
+      <span class="panel-title-text">区域实时监测</span>
+      <span class="panel-note" id="dataNote">等待 MQTT 数据…</span>
+    </p>
+
+    <div class="data-head" aria-hidden="true">
+      <span>区域</span><span>PM2.5</span><span>CO₂</span><span>人流等级</span><span>当前状态</span>
+    </div>
+    <div class="data-rows" id="dataRows"></div>
+
+    <p class="panel-foot">
+      订阅 <code>Airguard/+/data</code> · 已收 <b id="msgCount">0</b> 条 · 串区拦截 <b id="rejectCount">0</b> 条
+    </p>
+  </aside>
+
+  <!-- ---------- 悬浮信息面板：跟随鼠标 ---------- -->
+  <div class="tip" id="tip" hidden>
+    <div class="tip-head">
+      <span class="tip-swatch" id="tipSwatch" aria-hidden="true"></span>
+      <span class="tip-name" id="tipName"></span>
+      <span class="tip-id" id="tipId"></span>
+    </div>
+
+    <ul class="tip-legend">
+      <li><span class="tip-legend-dot tip-legend-dot--sign" id="tipSignDot"></span>
+        <span>上方<b>悬浮标牌</b>展示<b>空气质量</b></span></li>
+      <li><span class="tip-legend-dot tip-legend-dot--band" id="tipBandDot"></span>
+        <span>楼层<b>环绕灯带</b>展示整栋楼宇<b>人流密度</b></span></li>
+    </ul>
+
+    <dl class="tip-metrics">
+      <div class="tip-metric"><dt>PM2.5</dt><dd id="tipPm25">—</dd></div>
+      <div class="tip-metric"><dt>CO₂</dt><dd id="tipCo2">—</dd></div>
+    </dl>
+
+    <dl class="tip-rows">
+      <div class="tip-row"><dt>人流等级</dt><dd id="tipCrowd">—</dd></div>
+      <div class="tip-row"><dt>风险结论</dt><dd id="tipRisk">—</dd></div>
+      <div class="tip-row"><dt>更新时间</dt><dd id="tipTime">—</dd></div>
+    </dl>
+
+    <div class="tip-action">
+      <p class="tip-action-title">处置建议</p>
+      <ul class="tip-action-list" id="tipActions"></ul>
+    </div>
+  </div>
+
+  <!-- ---------- 操作提示 ---------- -->
+  <p class="hint" id="hint">拖拽旋转 · 滚轮缩放 · 右键平移 · 悬浮楼宇查看详情</p>
+
+</div>
+
+<!-- mqtt.js：浏览器端 MQTT over WebSocket 客户端 -->
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+
+<!-- Three.js：ES 模块 + 附带 OrbitControls -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<!-- 沙盘逻辑：楼宇搭建 / MQTT 订阅 / 标牌与灯带渲染 -->
+<script type="module" src="main.js"></script>
+
+</body>
+</html>

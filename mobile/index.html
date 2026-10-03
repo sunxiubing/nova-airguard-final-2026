@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- 手机竖屏适配：viewport-fit=cover 让页面能延伸到刘海/圆角区域，配合 CSS 的 safe-area 内边距 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#2a78d6" />
+<title>AirGuard 移动巡检面板</title>
+
+<!--
+  ============================================================================
+  AirGuard 校园多区域空气质量与人流监测预警协同系统 · 移动巡检端
+  ============================================================================
+  数据链路：
+      感知采集节点 → MQTT/JSON → 共享实时状态 → Web 监测大屏 / 移动巡检端 / 地图3D
+                        ↑
+                  MQTTX / python 发布端
+
+  本页面与 Web 大屏共用同一条实时数据流：
+      订阅主题  ws://127.0.0.1:8085   Airguard/+/data
+      报文格式  { zoneId, pm25, co2, crowdLevel, status, time }
+
+  本页面不含任何写死的示例数据：启动时卡片为空，只接收外部 MQTT 推送。
+  历史记录持久化：收到报文即写入 localStorage（airguard.history.mobile.v1，
+  上限 5000 条），刷新或重开自动读回，卡片与告警照常渲染但标注为「本地缓存」；
+  页脚【清空本地记录】只清本地存档与内存，不影响 MQTT 实时接收与告警。
+  代码分离：页面结构 → index.html ／ 样式 → style.css ／ MQTT 与渲染逻辑 → script.js
+  ============================================================================
+-->
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ==================== 顶部：标题 / 连接状态 ==================== -->
+<header class="app-bar" id="appBar" data-conn="connecting">
+  <div class="app-bar-row">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="app-bar-text">
+      <h1>AirGuard 移动巡检</h1>
+      <p class="app-bar-sub">校园多区域空气质量与人流监测预警协同系统</p>
+    </div>
+    <p class="conn" role="status">
+      <span class="conn-dot" aria-hidden="true"></span>
+      <span id="connText">连接中</span>
+    </p>
+  </div>
+  <p class="conn-detail" id="connDetail">正在连接 MQTT Broker…</p>
+</header>
+
+<!-- ==================== 持续风险与优先关注 ==================== -->
+<!-- 总分 = 环境异常分 + 人流分，取最高者为当前优先关注；规则与 Web 大屏 / 地图3D / 报告一致。
+     无读数时整块隐藏；全员 0 分时显示「暂无优先关注」 -->
+<section class="priority-banner" id="priorityBanner" data-focus="no" hidden
+         aria-label="持续风险与优先关注">
+  <p class="priority-tag" id="priorityTag">当前优先关注</p>
+  <div class="priority-head">
+    <p class="priority-zone" id="priorityZone"></p>
+    <p class="priority-total" id="priorityTotalRow"><b id="priorityTotal">0</b><span class="unit">分</span></p>
+  </div>
+  <p class="priority-split" id="prioritySplit"></p>
+  <p class="priority-reason" id="priorityReason" hidden></p>
+  <!-- 裁决理由：同分时说明是拿什么赢的（持续更久 / 环境分更高 / 人流等级更高） -->
+  <p class="priority-verdict" id="priorityVerdict" hidden></p>
+</section>
+
+<!-- ==================== 全局告警横幅 ==================== -->
+<!-- 任意区域 status 不为「正常」时由 script.js 取消 hidden 并高亮展示 -->
+<section class="alert-banner" id="alertBanner" data-level="critical" role="alert" hidden>
+  <span class="alert-icon" aria-hidden="true">⚠️</span>
+  <div class="alert-main">
+    <p class="alert-title">重点关注区域</p>
+    <ul class="alert-chips" id="alertChips"></ul>
+  </div>
+</section>
+
+<!-- 全部区域正常时的轻量提示（与上面的告警横幅互斥，仅用于区分「无告警」与「未连接」） -->
+<p class="all-clear" id="allClear" hidden>
+  <span aria-hidden="true">✓</span> 全部监测区域状态正常
+</p>
+
+<!-- ==================== 区域巡检卡片 ==================== -->
+<main class="zone-list" id="zoneList" aria-label="监测区域巡检列表"></main>
+
+<!-- 页面初始状态提示：所有卡片都未收到数据时显示 -->
+<p class="empty-hint" id="emptyHint">等待 MQTT 数据推送…</p>
+
+<!-- ==================== 页脚：链路自检信息 ==================== -->
+<footer class="app-foot">
+  <!-- 恢复本地历史后的来源说明，由 script.js 填充；无存档、无回执时保持 hidden -->
+  <p class="foot-note" id="restoreNote" hidden></p>
+  <p class="foot-row">
+    <span>订阅 <code>Airguard/+/data</code></span>
+    <span>已收 <b id="msgCount">0</b> 条</span>
+    <span>串区拦截 <b id="rejectCount">0</b> 条</span>
+  </p>
+  <!-- 清空本地历史记录：只删本地存档与内存，不影响 MQTT 实时接收与告警 -->
+  <button type="button" class="clear-btn" id="clearHistory">清空本地记录</button>
+</footer>
+
+<!-- mqtt.js：浏览器端 MQTT over WebSocket 客户端（外部库统一在 HTML 引入） -->
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<!-- 移动端业务逻辑：MQTT 订阅 / 结论重算 / 卡片渲染 -->
+<script src="script.js"></script>
+</body>
+</html>

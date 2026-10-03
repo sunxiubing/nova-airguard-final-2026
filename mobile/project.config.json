@@ -1,0 +1,45 @@
+{
+  "description": "AirGuard 校园多区域空气质量与人流监测预警协同系统 · 移动巡检端（微信小程序）",
+  "projectname": "AirGuard-Mobile",
+  "appid": "wx42a916b4bffe9f72",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "nodeModules": false,
+    "checkSiteMap": false,
+    "coverView": true,
+    "autoAudits": false,
+    "uploadWithSourceMap": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    },
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false
+  },
+  "condition": {
+    "miniprogram": {
+      "list": []
+    }
+  },
+  "simulatorPluginLibVersion": {},
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "editorSetting": {}
+}

@@ -1,0 +1,534 @@
+/* ============================================================
+   AirGuard 移动巡检端 · 巡检主页样式
+   ============================================================ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 0 28rpx;
+  box-sizing: border-box;
+}
+
+/* ============================ 顶部标题栏 ============================ */
+
+.app-bar {
+  flex: none;
+  padding: 20rpx 0 16rpx;
+}
+
+.app-bar-row {
+  display: flex;
+  align-items: center;
+}
+
+.brand-mark {
+  flex: none;
+  width: 60rpx;
+  height: 60rpx;
+  margin-right: 20rpx;
+  border-radius: 18rpx;
+  background: linear-gradient(145deg, #2a78d6, #184f95);
+}
+
+.app-bar-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-bar-title {
+  display: block;
+  font-size: 34rpx;
+  font-weight: 700;
+  letter-spacing: .5rpx;
+}
+
+.app-bar-sub {
+  display: block;
+  margin-top: 2rpx;
+  font-size: 22rpx;
+  color: #6b6a66;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- MQTT 连接状态徽标 --- */
+.conn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid rgba(11, 11, 11, .10);
+}
+
+.conn-dot {
+  width: 14rpx;
+  height: 14rpx;
+  margin-right: 10rpx;
+  border-radius: 50%;
+}
+
+.conn-text {
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.conn-connecting { background: #fff9ec; }
+.conn-connecting .conn-dot { background: #fab219; }
+.conn-connecting .conn-text { color: #7d5800; }
+
+.conn-connected { background: #f1faf1; }
+.conn-connected .conn-dot { background: #0ca30c; }
+.conn-connected .conn-text { color: #056b05; }
+
+.conn-error { background: #fdf3f3; }
+.conn-error .conn-dot { background: #d03b3b; }
+.conn-error .conn-text { color: #a31414; }
+
+.conn-detail {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 1.45;
+  color: #6b6a66;
+}
+
+/* ====================== 持续风险与优先关注 ====================== */
+
+/* 橙色是「优先关注」专用强调色（与 Web 大屏 / 报告 / 地图3D 同一支），
+   不参与状态色体系：状态色只表示环境结论等级 */
+.priority-banner {
+  flex: none;
+  padding: 20rpx 24rpx 22rpx;
+  margin-bottom: 20rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+  border: 2rpx solid rgba(11, 11, 11, .10);
+  border-left: 8rpx solid #c2410c;
+  box-shadow: 0 2rpx 4rpx rgba(11, 11, 11, .05), 0 12rpx 34rpx rgba(11, 11, 11, .06);
+}
+
+.priority-banner.focus-no { border-left-color: rgba(11, 11, 11, .10); }
+
+.priority-tag {
+  display: block;
+  font-size: 22rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+  color: #6b6a66;
+}
+
+.priority-head {
+  display: flex;
+  align-items: baseline;
+  margin-top: 8rpx;
+}
+
+.priority-zone {
+  flex: 1;
+  min-width: 0;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #0b0b0b;
+}
+
+.priority-total { flex: none; }
+
+.priority-total-num {
+  font-size: 52rpx;
+  font-weight: 700;
+  color: #c2410c;
+}
+
+.priority-total-unit {
+  margin-left: 4rpx;
+  font-size: 24rpx;
+  color: #52514e;
+}
+
+.priority-banner.focus-no .priority-total-num { color: #52514e; }
+
+.priority-split {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 26rpx;
+  color: #52514e;
+}
+
+.priority-reason {
+  display: block;
+  margin-top: 14rpx;
+  padding-top: 14rpx;
+  border-top: 2rpx dashed rgba(11, 11, 11, .10);
+  font-size: 24rpx;
+  line-height: 1.45;
+  color: #6b6a66;
+}
+
+/* 裁决理由：解释「凭什么是它」，比构成说明再低一档。
+   ::before 造一个「裁决 ·」前缀，正文里不带这个词，方便跨端比对字符串 */
+.priority-verdict {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  line-height: 1.45;
+  color: #6b6a66;
+}
+.priority-verdict::before {
+  content: '裁决 · ';
+  color: #c2410c;
+  font-weight: 650;
+}
+
+/* ============================ 全局告警横幅 ============================ */
+
+.alert-banner {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  padding: 22rpx 24rpx;
+  margin-bottom: 20rpx;
+  border-radius: 24rpx;
+  background: var(--lv-tint);
+  border: 2rpx solid var(--lv);
+  border-left-width: 10rpx;
+}
+
+.alert-icon {
+  flex: none;
+  margin-right: 16rpx;
+  font-size: 34rpx;
+  line-height: 1.15;
+}
+
+.alert-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-title {
+  display: block;
+  font-size: 24rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+  color: var(--lv-ink);
+}
+
+.alert-chips {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 12rpx;
+}
+
+.alert-chip {
+  padding: 6rpx 18rpx;
+  margin: 0 12rpx 10rpx 0;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--lv-ink);
+  background: #ffffff;
+  border: 2rpx solid var(--lv);
+}
+
+/* --- 全部正常时的轻量提示 --- */
+.all-clear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 18rpx 24rpx;
+  margin-bottom: 20rpx;
+  border-radius: 18rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #056b05;
+  background: #f1faf1;
+  border: 2rpx solid rgba(12, 163, 12, .35);
+}
+
+.all-clear-icon {
+  margin-right: 12rpx;
+}
+
+/* ============================ 卡片滚动区 ============================ */
+
+.zone-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.zone-list {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 20rpx;
+}
+
+/* ============================ 区域巡检卡片 ============================ */
+
+.zone-card {
+  display: flex;
+  margin-bottom: 24rpx;
+  border-radius: 24rpx;
+  background: var(--lv-tint);
+  box-shadow: 0 2rpx 4rpx rgba(11, 11, 11, .05), 0 12rpx 34rpx rgba(11, 11, 11, .06);
+  overflow: hidden;
+}
+
+/* 侧边颜色标识 */
+.zone-rail {
+  flex: none;
+  width: 12rpx;
+  background: var(--lv);
+}
+
+.zone-body {
+  flex: 1;
+  min-width: 0;
+  padding: 24rpx 26rpx 26rpx;
+}
+
+/* --- 卡片头 --- */
+.zone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.zone-title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.zone-name {
+  font-size: 34rpx;
+  font-weight: 700;
+  letter-spacing: .5rpx;
+}
+
+.zone-id {
+  margin-left: 14rpx;
+  font-size: 22rpx;
+  letter-spacing: .5rpx;
+  color: #6b6a66;
+  text-transform: uppercase;
+}
+
+/* 缓存读数标记：与 web 大屏、三维沙盘的「本地缓存」同一含义。
+   压在区域名后面而不是替换状态胶囊——颜色仍然只表示结论等级。 */
+.cached-pill {
+  flex: none;
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 6rpx;
+  font-size: 20rpx;
+  letter-spacing: .5rpx;
+  color: #6b6a66;
+  background: rgba(0, 0, 0, .05);
+  border: 2rpx dashed rgba(0, 0, 0, .22);
+}
+
+.status-pill {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: #ffffff;
+  border: 2rpx solid var(--lv);
+}
+
+.pill-icon {
+  margin-right: 10rpx;
+  font-size: 22rpx;
+  color: var(--lv);
+}
+
+.pill-text {
+  font-size: 25rpx;
+  font-weight: 700;
+  color: var(--lv-ink);
+}
+
+/* --- 环境监测数据 --- */
+.metric-row {
+  display: flex;
+  margin-top: 22rpx;
+}
+
+.metric {
+  flex: 1;
+  padding: 18rpx 22rpx;
+  border-radius: 18rpx;
+  background: #ffffff;
+}
+
+.metric:first-child {
+  margin-right: 20rpx;
+}
+
+.metric-value {
+  display: flex;
+  align-items: baseline;
+  margin-top: 4rpx;
+}
+
+.metric-num {
+  font-size: 54rpx;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.metric-unit {
+  margin-left: 8rpx;
+  font-size: 22rpx;
+  color: #6b6a66;
+}
+
+/* --- 环境结论 / 感知结论 --- */
+.conclusion-grid {
+  display: flex;
+  margin-top: 22rpx;
+}
+
+.conclusion-cell {
+  flex: 1;
+  padding: 16rpx 22rpx;
+  border-radius: 18rpx;
+  background: #ffffff;
+}
+
+.conclusion-cell:first-child {
+  margin-right: 20rpx;
+}
+
+.conclusion-value {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* 环境结论用状态深色，配左侧圆点双重编码（颜色不单独承载语义） */
+.v-status {
+  display: flex;
+  align-items: center;
+  color: var(--lv-ink);
+}
+
+.v-dot {
+  flex: none;
+  width: 16rpx;
+  height: 16rpx;
+  margin-right: 12rpx;
+  border-radius: 50%;
+  background: var(--lv);
+}
+
+/* --- 更新时间 --- */
+.conclusion-update {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 16rpx;
+  padding: 0 6rpx;
+}
+
+.v-time {
+  font-size: 25rpx;
+  font-weight: 500;
+  color: #52514e;
+}
+
+/* --- 必要处置操作 --- */
+.action-box {
+  margin-top: 22rpx;
+  padding: 20rpx 22rpx;
+  border-radius: 18rpx;
+  background: #ffffff;
+  border-left: 6rpx solid var(--lv);
+}
+
+.action-list {
+  margin-top: 10rpx;
+}
+
+.action-item {
+  display: flex;
+  align-items: flex-start;
+}
+
+.action-bullet {
+  flex: none;
+  width: 20rpx;
+  color: #6b6a66;
+}
+
+.action-text {
+  flex: 1;
+  font-size: 27rpx;
+  line-height: 1.55;
+}
+
+/* ============================ 空状态 / 页脚 ============================ */
+
+.empty-hint {
+  padding: 52rpx 32rpx;
+  border-radius: 24rpx;
+  border: 2rpx dashed rgba(11, 11, 11, .18);
+  font-size: 28rpx;
+  text-align: center;
+  color: #6b6a66;
+}
+
+.app-foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 16rpx 0;                                              /* 兜底：不支持 env() 时生效 */
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));     /* 避开 iPhone 底部横条 */
+  font-size: 22rpx;
+  color: #6b6a66;
+}
+
+/* 只作用于链路自检那一行，不要波及恢复说明与按钮 */
+.foot-row text {
+  margin: 0 14rpx;
+}
+
+/* 恢复本地历史后的来源说明，单独占一行，不与链路自检挤在一起 */
+.foot-note {
+  flex: none;
+  width: 100%;
+  margin-bottom: 10rpx;
+  text-align: center;
+  color: #7a5c28;      /* 对 #eef2f8 底 5.5:1；原 #8a6d3b 只有 4.3:1，22rpx 小字不达标 */
+}
+
+.foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  font-size: 22rpx;
+  color: #6b6a66;
+}
+
+.clear-btn {
+  flex: none;
+  margin-top: 14rpx;
+  padding: 0 56rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  font-size: 24rpx;
+  color: #a83232;
+  background: rgba(208, 59, 59, .07);
+  border: 2rpx solid rgba(208, 59, 59, .35);
+  border-radius: 10rpx;
+}
+
+.clear-btn::after { border: none; }   /* 去掉小程序 button 的默认边框 */

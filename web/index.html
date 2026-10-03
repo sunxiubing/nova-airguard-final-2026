@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>校园多区域空气质量与人流监测预警协同系统 · 监测大屏</title>
+
+<!--
+  ============================================================================
+  AirGuard 校园多区域空气质量与人流监测预警协同系统 · Web 监测大屏
+  ============================================================================
+  数据链路：
+      感知采集节点 → MQTT/JSON → 共享实时状态 → Web 监测台 / 移动端 / 地图3D
+                        ↑
+                  MQTTX / python 发布端
+
+  本页面不含任何写死的示例数据：启动时全部指标为空，只接收外部 MQTT 推送。
+  报文主题： Airguard/+/data        （+ 为区域通配符，如 Airguard/zone-n/data）
+  报文格式： { zoneid, pm25, co2, crowdLevel, status, time }
+             · zoneid     区域编号，与主题中的区域做双重校验
+             · pm25       PM2.5 浓度，单位 μg/m³
+             · co2        CO₂ 浓度，单位 ppm
+             · crowdLevel 人流等级：0=稀疏，1=正常，2=拥挤，3=严重拥挤
+             · status     上报状态，本页面不信任该字段，一律按阈值本地重算
+             · time       采样时间
+  ============================================================================
+-->
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="viz-root">
+
+<!-- ==================== 顶部：标题 / 连接状态 ==================== -->
+<header class="topbar" id="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div class="brand-text">
+      <h1>校园多区域空气质量与人流监测预警协同系统</h1>
+      <p class="brand-sub">监测大屏 · AirGuard Campus</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <p class="sys-state">
+      <span class="live-dot" id="liveDot" aria-hidden="true"></span>
+      <span id="connText">MQTT 未连接</span>
+    </p>
+
+    <p class="broker">
+      <span class="broker-label">Broker</span>
+      <code id="brokerUrl">ws://127.0.0.1:8085</code>
+    </p>
+
+    <p class="clock">
+      <span class="clock-label">最后收到消息</span>
+      <span id="clockTime" class="clock-time">--:--:--</span>
+    </p>
+
+    <div class="topbar-actions">
+      <button class="export-btn" id="exportCsv" type="button"
+              title="把本地保存的全部历史记录导出为 history.csv（含刷新前存下的记录）"
+              >导出 CSV</button>
+      <button class="export-btn export-btn--danger" id="clearHistory" type="button"
+              title="清除浏览器本地保存的全部历史记录与事件列表；区域卡片和趋势曲线不受影响"
+              >清空本地记录</button>
+    </div>
+  </div>
+
+  <!-- 运行统计：用于验证双通道校验确实在工作 -->
+  <div class="stat-strip">
+    <span>订阅主题 <code>Airguard/+/data</code></span>
+    <span>已收到消息 <b id="msgCount">0</b> 条</span>
+    <span>串区拦截 <b id="rejectCount">0</b> 条</span>
+    <span>上报状态与本地重算不符 <b id="statusMismatch">0</b> 条</span>
+  </div>
+
+  <p class="link-note" id="linkNote">正在连接 MQTT Broker，等待感知节点上报数据…</p>
+  <div class="conn-bar" id="connBar" aria-hidden="true"></div>
+</header>
+
+<main class="layout">
+
+  <!-- ==================== 多区域实时总览 ==================== -->
+  <section class="panel kpi-panel" aria-label="多区域实时总览">
+    <h2 class="panel-title">多区域实时总览<span class="panel-note">宿舍区 / 教学区 / 食堂区</span></h2>
+    <div class="kpi-row">
+      <div class="stat">
+        <p class="stat-label">在线监测区域</p>
+        <p class="stat-value" id="kpiOnline">0<span class="unit">/ 3</span></p>
+        <p class="stat-sub" id="kpiOnlineSub">等待 MQTT 推送</p>
+      </div>
+      <div class="stat">
+        <p class="stat-label">非正常区域</p>
+        <p class="stat-value" id="kpiAbnormal">0<span class="unit">个</span></p>
+        <p class="stat-sub" id="kpiAbnormalSub">按本地重算的 status 统计</p>
+      </div>
+      <div class="stat">
+        <p class="stat-label">全校区平均 PM2.5</p>
+        <p class="stat-value" id="kpiAvgPm">–</p>
+        <p class="stat-sub" id="kpiAvgPmSub">单位 μg/m³</p>
+      </div>
+      <div class="stat">
+        <p class="stat-label">重点关注区域</p>
+        <p class="stat-value stat-value--sm" id="kpiFocus">–</p>
+        <p class="stat-sub" id="kpiFocusSub">按告警级别排序</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 持续风险与优先关注 ==================== -->
+  <section class="panel priority-panel" id="priorityPanel" data-focus="no"
+           aria-label="持续风险与优先关注">
+    <h2 class="panel-title">
+      持续风险与优先关注
+      <span class="panel-note">总分 = 环境异常分 + 人流分 · 取最高者为当前优先关注</span>
+    </h2>
+    <div class="priority-body">
+      <div class="priority-hero" id="priorityFocus"></div>
+      <div class="priority-table-wrap">
+        <table class="data-table priority-table">
+          <thead>
+            <tr>
+              <th scope="col">区域</th>
+              <th scope="col">环境异常分</th>
+              <th scope="col">人流分</th>
+              <th scope="col">总分</th>
+              <th scope="col">判断理由</th>
+            </tr>
+          </thead>
+          <tbody id="priorityScoreBody"></tbody>
+        </table>
+        <p class="empty-state" id="priorityEmpty" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 区域卡片 ==================== -->
+  <section class="panel zones-panel" aria-label="监测区域">
+    <h2 class="panel-title">
+      监测区域
+      <span class="panel-note" id="focusNote">每张卡片展示 zoneid / pm25 / co2 / crowdLevel / status / time 六项数据</span>
+    </h2>
+    <div class="zone-grid" id="zoneGrid"></div>
+  </section>
+
+  <!-- ==================== 指标热力分布 ==================== -->
+  <section class="panel heat-panel" aria-label="指标热力分布">
+    <h2 class="panel-title">
+      指标热力分布
+      <span class="panel-note">颜色越深＝该指标负载越高</span>
+    </h2>
+    <div class="heat-scroll">
+      <table class="heat-table">
+        <caption class="sr-only">各区域 PM2.5、CO₂、人流等级与综合负载的归一化热力分布，单元格内为实测值。</caption>
+        <thead>
+          <tr>
+            <th scope="col" class="heat-corner">区域</th>
+            <th scope="col">pm25</th>
+            <th scope="col">co2</th>
+            <th scope="col">crowdLevel</th>
+            <th scope="col">综合负载</th>
+          </tr>
+        </thead>
+        <tbody id="heatBody"></tbody>
+      </table>
+    </div>
+    <div class="heat-legend" id="heatLegend"></div>
+    <p class="footnote">
+      归一化量程：PM2.5 0–200 μg/m³ · CO₂ 400–2000 ppm · 人流等级 0–3 · 综合负载为前三项归一化值的均值。单元格内为实测值。
+    </p>
+  </section>
+
+  <!-- ==================== PM2.5 趋势曲线 ==================== -->
+  <section class="panel trend-panel" aria-label="PM2.5 趋势曲线">
+    <h2 class="panel-title">
+      PM2.5 趋势曲线
+      <span class="panel-note" id="trendNote">每收到一条 MQTT 报文追加一个数据点</span>
+      <span class="seg" role="group" aria-label="视图切换">
+        <button class="seg-btn is-active" type="button" data-view="chart">曲线视图</button>
+        <button class="seg-btn" type="button" data-view="table">表格视图</button>
+      </span>
+    </h2>
+    <div class="chart-wrap" id="chartWrap">
+      <canvas id="trendCanvas" role="img" aria-label="三个区域 PM2.5 随时间变化的折线图"></canvas>
+      <p class="chart-empty" id="chartEmpty">等待 MQTT 数据…</p>
+    </div>
+    <div class="chart-table-wrap" id="chartTableWrap" hidden>
+      <table class="data-table">
+        <caption class="sr-only">各区域 PM2.5 采样值表格</caption>
+        <thead><tr id="trendTableHead"></tr></thead>
+        <tbody id="trendTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 告警事件状态列表 ==================== -->
+  <section class="panel alert-panel" aria-label="告警事件状态列表">
+    <h2 class="panel-title">
+      告警事件状态列表
+      <span class="panel-note" id="alertCount" role="status">暂无记录</span>
+    </h2>
+    <div class="alert-scroll">
+      <table class="data-table alert-table">
+        <caption class="sr-only">按发生时间倒序排列的区域状态事件记录，正常读数也在内，最多保留 30 条。</caption>
+        <thead>
+          <tr>
+            <th scope="col">发生时间</th>
+            <th scope="col">区域</th>
+            <th scope="col">状态类型</th>
+            <th scope="col">级别</th>
+            <th scope="col">关键指标</th>
+          </tr>
+        </thead>
+        <tbody id="alertBody"></tbody>
+      </table>
+      <p class="empty-state" id="alertEmpty">暂无事件记录，等待 MQTT 数据推送。</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- mqtt.js：浏览器端 MQTT over WebSocket 客户端 -->
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<!-- Chart.js：趋势曲线绘制 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<!-- 大屏逻辑：MQTT 订阅 / 状态重算 / 图表绘制 / 告警记录 -->
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+/* ============================================================
+   AirGuard 移动巡检端 · 全局样式
+   手机竖屏 / 轻量化 / 快速读取结论
+   配色与 Web 大屏保持同一套设计令牌：
+   - 状态色为保留色，仅表示 正常 / 轻度污染 / 通风不足风险 / 重度污染
+   - 状态色永远不单独承载语义，一律配「图形符号 + 中文结论文字」
+   单位统一用 rpx（750rpx = 屏幕宽度）
+   ============================================================ */
+
+page {
+  height: 100%;
+  background: #eef2f8;
+  color: #0b0b0b;
+  font-size: 28rpx;
+  line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------
+   状态色令牌
+   --lv      色条 / 圆点（图形通道）
+   --lv-ink  文字（深色变体，保证对比度）
+   --lv-tint 浅色底
+   ------------------------------------------------------------ */
+.level-good     { --lv: #0ca30c; --lv-ink: #056b05; --lv-tint: #f1faf1; }
+.level-warning  { --lv: #fab219; --lv-ink: #7d5800; --lv-tint: #fff9ec; }
+.level-serious  { --lv: #ec835a; --lv-ink: #99400f; --lv-tint: #fff6f1; }
+.level-critical { --lv: #d03b3b; --lv-ink: #a31414; --lv-tint: #fdf3f3; }
+.level-idle     { --lv: #c3c2b7; --lv-ink: #6b6a66; --lv-tint: #f7f9fc; }
+
+/* ------------------------------------------------------------
+   通用卡片 / 文本
+   ------------------------------------------------------------ */
+.card {
+  background: #ffffff;
+  border-radius: 24rpx;
+  box-shadow: 0 2rpx 4rpx rgba(11, 11, 11, .05), 0 12rpx 34rpx rgba(11, 11, 11, .06);
+}
+
+.muted { color: #6b6a66; }
+
+/* 小字号标签：环境结论 / 感知结论 / 更新时间 / PM2.5 … */
+.label {
+  font-size: 22rpx;
+  font-weight: 600;
+  letter-spacing: .5rpx;
+  color: #6b6a66;
+}

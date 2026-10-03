@@ -1,0 +1,173 @@
+<!-- ============================================================
+     AirGuard 移动巡检端 · 巡检主页
+     数据全部来自 MQTT 实时推送，页面不含任何写死的示例数据
+     ============================================================ -->
+
+<view class="page">
+
+  <!-- ==================== 顶部：标题 / 连接状态 ==================== -->
+  <view class="app-bar">
+    <view class="app-bar-row">
+      <view class="brand-mark"></view>
+
+      <view class="app-bar-text">
+        <text class="app-bar-title">AirGuard 移动巡检</text>
+        <text class="app-bar-sub">校园多区域空气质量与人流监测预警协同系统</text>
+      </view>
+
+      <view class="conn conn-{{conn}}">
+        <view class="conn-dot"></view>
+        <text class="conn-text">{{connText}}</text>
+      </view>
+    </view>
+
+    <text class="conn-detail">{{connDetail}}</text>
+  </view>
+
+  <!-- ==================== 持续风险与优先关注 ==================== -->
+  <!-- 总分 = 环境异常分 + 人流分，取最高者为当前优先关注；规则与 Web 大屏 / 地图3D / 报告一致。
+       无读数时整块隐藏；全员 0 分时标题变「持续风险」并显示「暂无优先关注」 -->
+  <view class="priority-banner focus-{{priority.focus}}" wx:if="{{priority.shown}}">
+    <text class="priority-tag">{{priority.tag}}</text>
+
+    <view class="priority-head">
+      <text class="priority-zone">{{priority.zone}}</text>
+      <view class="priority-total" wx:if="{{priority.hasWinner}}">
+        <text class="priority-total-num">{{priority.total}}</text>
+        <text class="priority-total-unit">分</text>
+      </view>
+    </view>
+
+    <text class="priority-split">{{priority.split}}</text>
+    <text class="priority-reason" wx:if="{{priority.hasWinner}}">{{priority.reason}}</text>
+    <!-- 裁决理由：同分时说明是拿什么赢的（持续更久 / 环境分更高 / 人流等级更高） -->
+    <text class="priority-verdict" wx:if="{{priority.hasWinner}}">{{priority.verdict}}</text>
+  </view>
+
+  <!-- ==================== 全局告警横幅 ==================== -->
+  <!-- 任意区域 status 不为「正常」时展示 -->
+  <view class="alert-banner level-{{bannerLevel}}" wx:if="{{bannerShown}}">
+    <text class="alert-icon">⚠️</text>
+    <view class="alert-main">
+      <text class="alert-title">重点关注区域</text>
+      <view class="alert-chips">
+        <text class="alert-chip level-{{item.level}}"
+              wx:for="{{alerts}}"
+              wx:key="zoneId">{{item.text}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 全部正常时的轻量提示（用于区分「无告警」与「未连接」） -->
+  <view class="all-clear" wx:if="{{allClearShown}}">
+    <text class="all-clear-icon">✓</text>
+    <text>全部监测区域状态正常</text>
+  </view>
+
+  <!-- ==================== 区域巡检卡片 ==================== -->
+  <scroll-view class="zone-scroll" scroll-y enable-flex>
+    <view class="zone-list">
+
+      <view class="zone-card level-{{item.level}}"
+            wx:for="{{zones}}"
+            wx:key="id">
+
+        <!-- 侧边颜色标识：正常=绿 轻度污染=黄 通风不足风险=橙 重度污染=红 -->
+        <view class="zone-rail"></view>
+
+        <view class="zone-body">
+
+          <!-- 区域 ID + 中文名称 + 结论胶囊 -->
+          <view class="zone-head">
+            <view class="zone-title">
+              <text class="zone-name">{{item.name}}</text>
+              <text class="zone-id">{{item.id}}</text>
+              <!-- 刷新/重进前存在本地的读数，等待 MQTT 推送新数据 -->
+              <text class="cached-pill" wx:if="{{item.cached}}">本地缓存</text>
+            </view>
+
+            <view class="status-pill level-{{item.level}}" wx:if="{{item.reported}}">
+              <text class="pill-icon">{{item.icon}}</text>
+              <text class="pill-text">{{item.statusText}}</text>
+            </view>
+          </view>
+
+          <!-- 环境监测数据：pm25 / co2 -->
+          <view class="metric-row">
+            <view class="metric">
+              <text class="label">PM2.5</text>
+              <view class="metric-value">
+                <text class="metric-num">{{item.pm25}}</text>
+                <text class="metric-unit">μg/m³</text>
+              </view>
+            </view>
+            <view class="metric">
+              <text class="label">CO₂</text>
+              <view class="metric-value">
+                <text class="metric-num">{{item.co2}}</text>
+                <text class="metric-unit">ppm</text>
+              </view>
+            </view>
+          </view>
+
+          <!-- 环境结论 + 感知结论 -->
+          <view class="conclusion-grid">
+            <view class="conclusion-cell">
+              <text class="label">环境结论</text>
+              <view class="conclusion-value v-status">
+                <view class="v-dot"></view>
+                <text>{{item.statusText}}</text>
+              </view>
+            </view>
+            <view class="conclusion-cell">
+              <text class="label">感知结论</text>
+              <text class="conclusion-value">{{item.crowdText}}</text>
+            </view>
+          </view>
+
+          <!-- 本条数据更新时间 -->
+          <view class="conclusion-update">
+            <text class="label">更新时间</text>
+            <text class="v-time">{{item.timeText}}</text>
+          </view>
+
+          <!-- 必要处置操作 -->
+          <view class="action-box" wx:if="{{item.reported}}">
+            <text class="label">必要处置操作</text>
+            <view class="action-list">
+              <view class="action-item"
+                    wx:for="{{item.actions}}"
+                    wx:for-item="act"
+                    wx:key="*this">
+                <text class="action-bullet">·</text>
+                <text class="action-text">{{act}}</text>
+              </view>
+            </view>
+          </view>
+
+        </view>
+      </view>
+
+      <!-- 页面初始状态：所有区域都未上报 -->
+      <view class="empty-hint" wx:if="{{emptyShown}}">
+        <text>等待 MQTT 数据推送…</text>
+      </view>
+
+    </view>
+  </scroll-view>
+
+  <!-- ==================== 页脚：链路自检 + 本地记录 ==================== -->
+  <view class="app-foot">
+    <!-- 恢复本地历史后在页脚交代数据来源，避免把缓存读数当成实时数据 -->
+    <text class="foot-note" wx:if="{{restoreNote}}">☁ {{restoreNote}}</text>
+
+    <view class="foot-row">
+      <text>订阅 Airguard/+/data</text>
+      <text>已收 {{msgCount}} 条</text>
+      <text>串区拦截 {{rejectCount}} 条</text>
+    </view>
+
+    <button class="clear-btn" type="button" bindtap="onClearHistory">清空本地记录</button>
+  </view>
+
+</view>

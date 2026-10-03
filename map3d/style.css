@@ -1,0 +1,1032 @@
+/* ============================================================================
+   AirGuard 三维数字孪生沙盘 · 覆盖层样式
+   ----------------------------------------------------------------------------
+   画布由 Three.js 绘制；本文件只负责画布之上的 HTML 层：
+     楼宇悬浮标签 + 发光标牌 / 顶部标题与状态栏 / 全局告警横幅
+     左下角图例 / 右下角区域实时监测 / 悬浮信息面板
+
+   两套色彩系统彼此独立，刻意不共用色相：
+     --air-*   空气质量（悬浮标牌）  绿 → 黄 → 橙 → 红
+     --flow-*  人流密度（环绕灯带）  浅蓝 → 深蓝 → 深绿 → 深紫
+   ========================================================================== */
+
+:root {
+  /* ---- 空气质量控制色：由 JS 按等级写入 --air-color / --air-ink ---- */
+  --air-color: #9aa6b4;
+  --air-ink: #5b6675;
+
+  /* ---- 人流密度控制色（图例与数据面板使用）---- */
+  --flow-0: #5cbcf2;
+  --flow-1: #2f7ad4;
+  --flow-2: #12724a;
+  --flow-3: #4a2178;
+
+  /* ---- 界面中性色 ---- */
+  --ink-1: #16202e;
+  --ink-2: #56657a;
+  --ink-3: #8b98a8;
+  --line: rgba(22, 40, 68, 0.11);
+  --line-soft: rgba(22, 40, 68, 0.07);
+  --panel: rgba(255, 255, 255, 0.88);
+  --panel-solid: #ffffff;
+  --shadow: 0 10px 30px -12px rgba(18, 38, 66, 0.28), 0 2px 8px -4px rgba(18, 38, 66, 0.16);
+  --radius: 14px;
+
+  --font: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC",
+    "Noto Sans CJK SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font);
+  color: var(--ink-1);
+  background: #e9eef4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   画布与标签层
+   ======================================================================== */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  cursor: grab;
+}
+.stage canvas:active { cursor: grabbing; }
+
+.tag-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;   /* 不遮挡画布的拾取与轨道控制 */
+  overflow: hidden;
+}
+
+/* ---- 单栋楼宇的悬浮标签（永久显示）---- */
+.bld-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.bld-name {
+  margin: 0;
+  padding: 3px 11px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-1);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px -8px rgba(18, 38, 66, 0.5);
+}
+
+.bld-code {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+
+/* ---- 优先关注徽标：挂在悬浮标签上，只对当前优先关注的那一栋出现 ----
+   徽标是文字，不依赖颜色单独表意；橙色只做强调 */
+.bld-priority-badge {
+  display: none;
+  margin: 1px 0 0;
+  padding: 2px 9px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  background: #c2410c;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px -6px rgba(194, 65, 12, 0.9);
+}
+.bld-tag.bld-priority .bld-priority-badge {
+  display: block;
+  animation: priorityBadgeIn 0.3s ease-out;
+}
+@keyframes priorityBadgeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- 悬浮发光标牌：承载空气质量 ---- */
+.bld-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 11px 4px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--air-ink);
+  background: var(--panel-solid);
+  border: 1.5px solid var(--air-color);
+  border-radius: 999px;
+  /* 基础光晕：与标牌同色，营造「自发光面板」的观感 */
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--air-color) 22%, transparent),
+    0 0 16px -2px var(--air-color),
+    0 6px 16px -10px rgba(18, 38, 66, 0.6);
+  transition: color 0.35s, border-color 0.35s, background 0.35s;
+  will-change: transform, box-shadow;
+}
+
+.bld-sign-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--air-color);
+  box-shadow: 0 0 8px var(--air-color);
+}
+
+.bld-sign[data-level="idle"] {
+  color: var(--ink-2);
+  box-shadow: 0 4px 12px -8px rgba(18, 38, 66, 0.5);
+}
+
+/* 缓存读数：刷新前存在本地、尚未等到本次会话的推送。
+   只压暗并换成虚线描边，不动色相——颜色仍然只表示空气质量等级。 */
+.bld-sign[data-cached="1"] {
+  opacity: 0.72;
+  border-style: dashed;
+}
+.bld-sign[data-cached="1"] .bld-sign-dot {
+  animation: none;
+  box-shadow: none;
+}
+
+/* 空气质量异常 → 标牌脉冲闪烁光晕（代表风险处置中） */
+.bld-sign[data-pulse="1"] {
+  animation: signPulse var(--pulse-dur, 1.6s) ease-in-out infinite;
+}
+
+@keyframes signPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--air-color) 22%, transparent),
+      0 0 14px -3px var(--air-color),
+      0 6px 16px -10px rgba(18, 38, 66, 0.6);
+  }
+  50% {
+    transform: scale(1.07);
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--air-color) 34%, transparent),
+      0 0 30px 2px var(--air-color),
+      0 8px 20px -10px rgba(18, 38, 66, 0.55);
+  }
+}
+
+/* ==========================================================================
+   覆盖层容器
+   ======================================================================== */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;   /* 只有具体面板接收事件 */
+}
+
+.overlay .topbar,
+.overlay .alert-banner,
+.overlay .legend,
+.overlay .data-panel,
+.overlay .tip {
+  pointer-events: auto;
+}
+
+/* 通用面板外观 */
+.panel-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;      /* 状态说明变长时另起一行，而不是把标题挤成两行 */
+  gap: 3px 12px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-1);
+}
+.panel-title-text { white-space: nowrap; }
+.panel-title::before {
+  content: "";
+  flex: none;
+  width: 3px;
+  height: 12px;
+  margin-right: -6px;
+  border-radius: 2px;
+  background: var(--ink-1);
+  opacity: 0.75;
+}
+.panel-title > :first-child { margin-right: auto; }
+
+.panel-note {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+/* ==========================================================================
+   顶部：标题 + 状态栏
+   ======================================================================== */
+
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 16px 9px 13px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.brand-mark {
+  flex: none;
+  width: 10px;
+  height: 26px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--flow-1), var(--flow-3));
+  box-shadow: 0 0 14px -2px var(--flow-1);
+}
+
+.brand-text h1 {
+  margin: 0;
+  font-size: 16.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+.brand-en {
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--flow-1);
+}
+.brand-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+/* ---- 右上角状态栏 ---- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 8px 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 14px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.status-item + .status-item { border-left: 1px solid var(--line-soft); }
+
+.status-key {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.status-val { font-weight: 700; color: var(--ink-1); }
+.status-time { font-family: var(--mono); letter-spacing: 0.04em; }
+
+/* 清空本地记录：放在状态栏最右，与三个只读状态项并列但明显是可点的 */
+.status-item--action { padding: 2px 8px 2px 12px; }
+
+.clear-btn {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 4px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #8e1a1a;
+  background: rgba(211, 47, 47, 0.08);
+  border: 1px solid rgba(211, 47, 47, 0.35);
+  transition: background 0.2s, border-color 0.2s;
+}
+.clear-btn:hover {
+  background: rgba(211, 47, 47, 0.16);
+  border-color: rgba(211, 47, 47, 0.6);
+}
+.clear-btn:focus-visible {
+  outline: 2px solid #d32f2f;
+  outline-offset: 2px;
+}
+
+.status-code {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--ink-2);
+  background: rgba(22, 40, 68, 0.055);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-3);
+  box-shadow: 0 0 0 3px rgba(139, 152, 168, 0.2);
+}
+
+.statusbar[data-conn="online"] .live-dot {
+  background: #12a150;
+  box-shadow: 0 0 0 3px rgba(18, 161, 80, 0.22), 0 0 10px #12a150;
+  animation: livePulse 2.4s ease-in-out infinite;
+}
+.statusbar[data-conn="online"] #connText { color: #0b6b36; }
+
+.statusbar[data-conn="connecting"] .live-dot {
+  background: #e8a317;
+  box-shadow: 0 0 0 3px rgba(232, 163, 23, 0.22);
+  animation: livePulse 1s ease-in-out infinite;
+}
+.statusbar[data-conn="connecting"] #connText { color: #8a5f00; }
+
+.statusbar[data-conn="offline"] .live-dot,
+.statusbar[data-conn="error"] .live-dot {
+  background: #d32f2f;
+  box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.2);
+}
+.statusbar[data-conn="offline"] #connText,
+.statusbar[data-conn="error"] #connText { color: #8e1a1a; }
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.42; }
+}
+
+/* ==========================================================================
+   顶部居中叠放：优先关注横幅 + 全局告警横幅
+   --------------------------------------------------------------------------
+   两条横幅都按内容高度自适应，所以纵向排成一列而不是各自绝对定位——
+   否则宽度一变就会互相压住。整列不吃指针事件，画布拖拽照常。
+   ======================================================================== */
+
+.top-stack {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(880px, calc(100vw - 460px));
+  pointer-events: none;      /* 只有横幅本身接收事件 */
+}
+
+.top-stack > * { pointer-events: auto; max-width: 100%; }
+
+/* 列内不再各自绝对定位；bannerIn 的 translateX(-50%) 也随之失效，
+   这里换成只做 Y 方向入场的同款动画 */
+.top-stack .alert-banner {
+  position: static;
+  top: auto;
+  left: auto;
+  transform: none;
+  animation: bannerInStack 0.35s ease-out, bannerPulse 2.1s ease-in-out 0.35s infinite;
+}
+
+@keyframes bannerInStack {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- 持续风险与优先关注 ---- */
+/* 橙色是「优先关注」专用强调色（与 web 大屏 / 移动端 / 报告同一支），
+   不参与空气质量与人流两套状态色体系 */
+.priority-banner {
+  width: 100%;
+  padding: 11px 18px 12px 15px;
+  background: linear-gradient(180deg, #fff8f3, #ffffff);
+  border: 1px solid rgba(194, 65, 12, 0.3);
+  border-left: 4px solid #c2410c;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), 0 0 24px -12px rgba(194, 65, 12, 0.55);
+  animation: bannerInStack 0.35s ease-out;
+}
+.priority-banner[hidden] { display: none; }
+.priority-banner[data-focus="no"] {
+  background: linear-gradient(180deg, #f7f9fc, #ffffff);
+  border-color: var(--line);
+  border-left-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.priority-tag {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+.priority-banner[data-focus="yes"] .priority-tag { color: #9a3412; }
+
+.priority-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.priority-zone {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.priority-total { margin: 0 0 0 auto; }
+.priority-total[hidden] { display: none; }
+.priority-total b {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 700;
+  color: #c2410c;
+}
+.priority-banner[data-focus="no"] .priority-total b { color: var(--ink-2); }
+.priority-unit { margin-left: 3px; font-size: 12px; color: var(--ink-2); }
+
+.priority-split {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.priority-reason {
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.priority-reason[hidden] { display: none; }
+
+/* 裁决理由：解释「凭什么是它」，比构成说明再低一档。
+   ::before 造一个「裁决 ·」前缀，正文里不带这个词，方便跨端比对字符串 */
+.priority-verdict {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3, #6b7280);
+}
+.priority-verdict[hidden] { display: none; }
+.priority-verdict::before {
+  content: '裁决 · ';
+  color: #c2410c;
+  font-weight: 650;
+}
+
+/* ==========================================================================
+   全局告警横幅
+   ======================================================================== */
+
+.alert-banner {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  max-width: min(880px, calc(100vw - 460px));
+  padding: 10px 18px 11px 15px;
+  background: linear-gradient(180deg, #fff6f6, #ffffff);
+  border: 1px solid rgba(211, 47, 47, 0.3);
+  border-left: 4px solid #d32f2f;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), 0 0 24px -10px rgba(211, 47, 47, 0.5);
+  animation: bannerIn 0.35s ease-out, bannerPulse 2.1s ease-in-out 0.35s infinite;
+}
+.alert-banner[hidden] { display: none; }
+
+.alert-icon { font-size: 17px; line-height: 1.35; }
+
+.alert-title {
+  margin: 0 0 5px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #8e1a1a;
+}
+
+.alert-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-chip {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  color: var(--chip-ink, #8e1a1a);
+  background: var(--chip-bg, rgba(211, 47, 47, 0.1));
+  border: 1px solid var(--chip-line, rgba(211, 47, 47, 0.28));
+}
+.alert-chip[data-level="warning"] {
+  --chip-ink: #8a5f00; --chip-bg: rgba(232, 163, 23, 0.12); --chip-line: rgba(232, 163, 23, 0.34);
+}
+.alert-chip[data-level="serious"] {
+  --chip-ink: #8c3d06; --chip-bg: rgba(226, 104, 31, 0.12); --chip-line: rgba(226, 104, 31, 0.34);
+}
+.alert-chip[data-level="good"] {
+  --chip-ink: #0b6b36; --chip-bg: rgba(18, 161, 80, 0.12); --chip-line: rgba(18, 161, 80, 0.3);
+}
+
+@keyframes bannerIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes bannerPulse {
+  0%, 100% { box-shadow: var(--shadow), 0 0 22px -12px rgba(211, 47, 47, 0.55); }
+  50%      { box-shadow: var(--shadow), 0 0 34px -6px rgba(211, 47, 47, 0.75); }
+}
+
+/* ==========================================================================
+   左下角：图例
+   ======================================================================== */
+
+.legend {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  width: 232px;
+  padding: 13px 15px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.legend-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 11px 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.legend-group-label:first-of-type { margin-top: 2px; }
+
+/* 用形状把「标牌」和「灯带」区分开，呼应三维场景里的两种组件 */
+.legend-swatch-shape {
+  flex: none;
+  background: currentColor;
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+.legend-swatch-shape--sign {
+  width: 13px;
+  height: 9px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  background: transparent;
+}
+.legend-swatch-shape--band {
+  width: 15px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.legend-row {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.legend-swatch {
+  flex: none;
+  width: 15px;
+  height: 10px;
+}
+.legend-swatch--sign { border-radius: 999px; box-shadow: 0 0 7px -1px currentColor; }
+.legend-swatch--band { height: 5px; border-radius: 2px; box-shadow: 0 0 8px -1px currentColor; }
+
+.legend-note {
+  margin: 11px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+/* ==========================================================================
+   右下角：区域实时监测
+   ======================================================================== */
+
+.data-panel {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 424px;
+  padding: 13px 15px 11px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.data-head,
+.data-row {
+  display: grid;
+  grid-template-columns: 1.3fr 0.72fr 0.72fr 1fr 1.06fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.data-head {
+  padding: 0 2px 7px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+}
+.data-head span:not(:first-child) { text-align: right; }
+
+.data-rows { display: grid; gap: 3px; padding-top: 6px; }
+
+.data-row {
+  position: relative;
+  padding: 7px 2px 7px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  transition: background 0.25s;
+}
+/* 左侧色条：与悬浮标牌同一套空气质量控制色 */
+.data-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--row-color, var(--ink-3));
+}
+.data-row[data-level="good"]     { --row-color: #12a150; }
+.data-row[data-level="warning"]  { --row-color: #e8a317; }
+.data-row[data-level="serious"]  { --row-color: #e2681f; }
+.data-row[data-level="critical"] { --row-color: #d32f2f; background: rgba(211, 47, 47, 0.05); }
+.data-row[data-level="idle"]     { --row-color: #b6c0cc; }
+
+/* 缓存读数标记：紧跟区域名，与 web 大屏卡片上的「本地缓存」同一含义 */
+.dr-cached {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: 1px;
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--ink-2);
+  background: rgba(22, 40, 68, 0.07);
+  border: 1px dashed rgba(22, 40, 68, 0.28);
+}
+
+.dr-zone { display: flex; flex-direction: column; line-height: 1.25; }
+.dr-zone b { font-size: 12.5px; font-weight: 700; }
+.dr-zone i {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+.dr-num {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.dr-crowd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.dr-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow: 0 0 7px -1px currentColor;
+}
+
+.dr-status {
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.dr-status[data-risk="1"] { color: var(--row-color); }
+.dr-status[data-risk="1"]::after {
+  content: " ●";
+  font-size: 8px;
+  vertical-align: 1px;
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+
+.panel-foot {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.panel-foot code {
+  font-family: var(--mono);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(22, 40, 68, 0.055);
+}
+.panel-foot b { color: var(--ink-2); }
+
+/* ==========================================================================
+   悬浮信息面板
+   ======================================================================== */
+
+.tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  width: 296px;
+  padding: 13px 15px 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--air-color);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 44px -18px rgba(18, 38, 66, 0.5), 0 2px 10px -6px rgba(18, 38, 66, 0.3);
+  will-change: transform;
+  animation: tipIn 0.14s ease-out;
+}
+.tip[hidden] { display: none; }
+
+@keyframes tipIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tip-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--air-color);
+  box-shadow: 0 0 9px -1px var(--air-color);
+}
+.tip-name { font-size: 14px; font-weight: 700; }
+.tip-id {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+.tip-legend {
+  display: grid;
+  gap: 5px;
+  margin: 9px 0 0;
+  padding: 0 0 9px;
+  border-bottom: 1px solid var(--line-soft);
+  list-style: none;
+}
+.tip-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.tip-legend b { color: var(--ink-1); font-weight: 700; }
+
+.tip-legend-dot { flex: none; }
+.tip-legend-dot--sign {
+  width: 14px;
+  height: 9px;
+  border-radius: 999px;
+  border: 1.5px solid var(--air-color);
+}
+.tip-legend-dot--band {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ink-3);
+}
+
+.tip-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.tip-metric {
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(22, 40, 68, 0.04);
+}
+.tip-metric dt {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.tip-metric dd {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.tip-rows { display: grid; gap: 5px; margin: 10px 0 0; }
+.tip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11.5px;
+}
+.tip-row dt { flex: none; color: var(--ink-3); }
+.tip-row dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+  color: var(--ink-1);
+}
+.tip-row dd#tipRisk { color: var(--air-ink); }
+
+.tip-action {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+}
+.tip-action-title {
+  margin: 0 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.tip-action-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tip-action-list li {
+  position: relative;
+  padding-left: 13px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-1);
+}
+.tip-action-list li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--air-color);
+}
+
+/* ==========================================================================
+   操作提示
+   ======================================================================== */
+
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 15px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   窄屏降级：让出画布空间
+   ======================================================================== */
+
+@media (max-width: 1280px) {
+  .data-panel { width: 372px; }
+  .legend { width: 208px; }
+  .brand-text h1 { font-size: 14.5px; }
+  .alert-banner { max-width: calc(100vw - 40px); }
+  .top-stack { max-width: calc(100vw - 40px); }
+  .hint { display: none; }
+}
+
+@media (max-width: 980px) {
+  .topbar { flex-direction: column; align-items: stretch; }
+  .statusbar { align-self: flex-start; flex-wrap: wrap; }
+  .data-panel { width: calc(100vw - 36px); }
+  .legend { display: none; }
+}
