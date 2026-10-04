@@ -21,9 +21,9 @@
       报文格式  { zoneId, pm25, co2, crowdLevel, status, time }
 
   本页面不含任何写死的示例数据：启动时卡片为空，只接收外部 MQTT 推送。
-  历史记录持久化：收到报文即写入 localStorage（airguard.history.mobile.v1，
-  上限 5000 条），刷新或重开自动读回，卡片与告警照常渲染但标注为「本地缓存」；
-  页脚【清空本地记录】只清本地存档与内存，不影响 MQTT 实时接收与告警。
+  一律不落盘：不写任何 localStorage，刷新即全部清零，卡片、事件列表、
+  D3 事件状态机都由本次会话新收到的报文重建；
+  页脚【清空本地记录】只清内存里的记录，不影响 MQTT 实时接收与告警。
   代码分离：页面结构 → index.html ／ 样式 → style.css ／ MQTT 与渲染逻辑 → script.js
   ============================================================================
 -->
@@ -87,14 +87,14 @@
 
 <!-- ==================== 页脚：链路自检信息 ==================== -->
 <footer class="app-foot">
-  <!-- 恢复本地历史后的来源说明，由 script.js 填充；无存档、无回执时保持 hidden -->
+  <!-- 清空记录后的一次性回执，由 script.js 填充；无回执时保持 hidden -->
   <p class="foot-note" id="restoreNote" hidden></p>
   <p class="foot-row">
     <span>订阅 <code>Airguard/+/data</code></span>
     <span>已收 <b id="msgCount">0</b> 条</span>
     <span>串区拦截 <b id="rejectCount">0</b> 条</span>
   </p>
-  <!-- 清空本地历史记录：只删本地存档与内存，不影响 MQTT 实时接收与告警 -->
+  <!-- 清空记录：只清内存，不影响 MQTT 实时接收与告警（本页不落盘） -->
   <button type="button" class="clear-btn" id="clearHistory">清空本地记录</button>
 </footer>
 

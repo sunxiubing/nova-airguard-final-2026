@@ -87,10 +87,59 @@ function crowdScore(v) {
   return n < 0 ? 0 : (n > 3 ? 3 : n);
 }
 
+/* ------------------------------------------------------------
+   D3 干预—验证—恢复
+   与 Web 大屏 / 移动端浏览器版 / 地图3D 逐字同源的常量与规则。
+   四端各有一份实现，靠同一套确定性规则 + MQTT 干预广播收敛到同一状态，
+   所以这里任何一个数改了都必须四处同步。
+   ------------------------------------------------------------ */
+var EV_OPEN = 'OPEN';           // 待处理：监测捕获异常，等管理员干预
+var EV_HANDLING = 'HANDLING';   // 处理中：已提交干预，等新监测数据验证
+var EV_RECOVERED = 'RECOVERED'; // 已恢复：连续达标数据自动判定，之后不再回滚
+
+var EV_RELAPSE_SAMPLES = 2;     // 干预后连续 2 组数据比干预时更严重 → 回退待处理
+var EV_CONFIDENCE_FLOOR = 0.6;  // 低于此值视为低可信度感知数据
+var EV_DEDUPE_MAX = 500;        // 去重键保留上限
+var EV_LOG_MAX = 40;            // 单个事件保留的日志条数
+
+/* 干预动作：卡片上多选。环境异常按等级取一组，人流拥挤按 2 / 3 档取一组,
+   选项文字与任务书逐字一致 */
+var EV_ACTIONS = {
+  warning:  ['开启低档位新风', '广播提醒开窗通风', '安排教室巡检'],
+  critical: ['全开新风+喷雾降尘', '关闭外窗', '暂停大型聚集活动'],
+  serious:  ['开启教室新风换气机组', '课间开窗提醒', '延长排风扇工作时间'],
+  crowd2:   ['安排人员走廊分流', '大屏错峰下课提示', '开放备用通道'],
+  crowd3:   ['区域入口限流', '广播引导疏散', '上报值班老师']
+};
+
+var EV_LABEL = {
+  OPEN: 'OPEN 待处理',
+  HANDLING: 'HANDLING 处理中',
+  RECOVERED: 'RECOVERED 已恢复'
+};
+
+/* 事件表只活在内存里，不落盘：重进页面即回到初始态，由新收到的报文重新建立。
+   这里只留内存上限 —— 它不参与任何存储键，【清空本地记录】也无事可做 */
+var EVENTS = {
+  limit: 50                     // 事件表最多留 50 条，超出丢最旧的
+};
+
+/* 去重表：数组保序（用来淘汰最旧的键），对象做 O(1) 命中判断 */
+var seenKeys = [];
+var seenSet = {};
+
+/* 事件序号：event_id 里的自增段，恢复存档时按已有的最大值接着往下发 */
+var eventSeq = 0;
+
 var MQTT_CONFIG = {
   url: 'ws://127.0.0.1:8085',   // 与 Web 大屏共用同一个 Broker
   protocol: 'mqtt',             // WebSocket 子协议；mosquitto 要求必须带上
   topic: 'Airguard/+/data',     // + 为区域通配符
+  /* D3 干预广播：与数据流共用同一条连接，靠主题前缀分流。
+     Airguard/+/data 收不到它 —— 那个过滤器要求第 3 段是 data，
+     而干预主题的第 3 段是区域 ID（Airguard/intervention/zone-n） */
+  interventionTopic: 'Airguard/intervention/+',
+  interventionPrefix: 'Airguard/intervention/',
   qos: 0,
   keepalive: 30,                // 秒
   reconnectPeriod: 3000         // 断线后每 3 秒重连
@@ -205,6 +254,23 @@ function buildPuback(packetId) {
   return buildPacket(0x40, [(packetId >> 8) & 0xff, packetId & 0xff]);
 }
 
+/* PUBLISH：可变头 = 主题（两字节长度前缀 + UTF-8）+ [QoS>0 时的报文标识符]，
+   载荷跟在后面；固定头 = 0x30 | (QoS << 1) | retain。
+   QoS0 不发标识符也不等回执，本端的干预广播就用 QoS0 + retain。 */
+function buildPublish(topic, payload, qos, packetId, retain) {
+  var t = utf8Encode(topic);
+  var body = [(t.length >> 8) & 0xff, t.length & 0xff];
+  for (var i = 0; i < t.length; i++) body.push(t[i]);
+
+  if (qos > 0) body.push((packetId >> 8) & 0xff, packetId & 0xff);
+
+  var p = utf8Encode(payload);
+  for (var j = 0; j < p.length; j++) body.push(p[j]);
+
+  var header = 0x30 | ((qos & 0x03) << 1) | (retain ? 0x01 : 0x00);
+  return buildPacket(header, body);
+}
+
 var PACKET_PINGREQ = new Uint8Array([0xc0, 0x00]).buffer;
 var PACKET_DISCONNECT = new Uint8Array([0xe0, 0x00]).buffer;
 
@@ -259,9 +325,9 @@ function field(obj, names) {
 
 /* 区域标识归一化：zone-n / n / 宿舍区 / dorm 统一成 zone-n */
 var ZONE_ALIAS = {
-  'zone-n': 'zone-n', 'n': 'zone-n', '宿舍区': 'zone-n', '宿舍': 'zone-n', 'dorm': 'zone-n',
-  'zone-s': 'zone-s', 's': 'zone-s', '教学区': 'zone-s', '教学': 'zone-s', 'teach': 'zone-s',
-  'zone-w': 'zone-w', 'w': 'zone-w', '食堂区': 'zone-w', '食堂': 'zone-w', 'canteen': 'zone-w'
+  'zone-n': 'zone-n', 'n': 'zone-n', 'north': 'zone-n', '宿舍区': 'zone-n', '宿舍': 'zone-n', 'dorm': 'zone-n',
+  'zone-s': 'zone-s', 's': 'zone-s', 'south': 'zone-s', '教学区': 'zone-s', '教学': 'zone-s', 'teach': 'zone-s',
+  'zone-w': 'zone-w', 'w': 'zone-w', 'west': 'zone-w', '食堂区': 'zone-w', '食堂': 'zone-w', 'canteen': 'zone-w', 'dining': 'zone-w'
 };
 
 function deriveZoneId(raw) {
@@ -280,20 +346,30 @@ function zoneFromTopic(topic) {
   return null;
 }
 
-/* 双通道区域校验：主题段与报文 zoneId 必须指向同一区域，防止数据串区 */
+/* 双通道区域校验：主题段与报文 zoneId 必须指向同一区域，防止数据串区。
+   任一路写了无法识别的区域、或两路互相矛盾，整条报文一律拒收；
+   主题认不出区域时绝不回退到报文 zoneId —— 那正是串区报文的典型形态
+   （主题 Airguard/zone-m/data + 报文 zoneId=zone-w）。
+   四端同一口径：web / 手机端 / 小程序 / 3D 沙盘。 */
 function resolveZone(topic, payload) {
   var fromTopic = zoneFromTopic(topic);
-  var fromPayload = deriveZoneId(field(payload, ['zoneid', 'zone_id', 'zone', 'areaid', 'area']));
+  var rawPayloadZone = field(payload, ['zoneid', 'zone_id', 'zone', 'areaid', 'area']);
+  var fromPayload = deriveZoneId(rawPayloadZone);
+  var payloadZoneGiven = rawPayloadZone !== undefined && rawPayloadZone !== null &&
+                         String(rawPayloadZone).trim() !== '';
 
-  if (fromTopic && fromPayload) {
+  if (!fromTopic) {
+    return { error: 'topic-zone', detail: '主题「' + topic + '」里没有可识别的区域段' };
+  }
+  if (payloadZoneGiven) {
+    if (!fromPayload) {
+      return { error: 'payload-zone', detail: '报文 zoneId「' + rawPayloadZone + '」不是已知区域' };
+    }
     if (fromTopic !== fromPayload) {
       return { error: 'mismatch', detail: '主题指向 ' + fromTopic + '，报文 zoneId 却是 ' + fromPayload };
     }
-    return { zoneId: fromTopic };
   }
-  if (fromTopic) return { zoneId: fromTopic };
-  if (fromPayload) return { zoneId: fromPayload };
-  return { error: 'unknown', detail: '主题与报文都无法识别区域' };
+  return { zoneId: fromTopic };
 }
 
 /* 环境结论判定 —— 任务书规则，一律本地重算，不信任报文里的 status：
@@ -369,8 +445,15 @@ function parseReading(topic, rawText) {
       reportedStatus: reportedStatus,
       time: time,
       // 解析成毫秒：持续时长要按报文时间戳做减法，字符串没法比
-      ts: (toDate(time) || new Date()).getTime()
+      ts: (toDate(time) || new Date()).getTime(),
+      // 归一化到 YYYY-MM-DD HH:MM:SS：事件时间、去重指纹、日志都按它对齐
+      timeFull: fmtStampFull(time) || fmtStampFull(Date.now()),
+      /* 低可信度感知数据不能促成恢复 —— 解析时就算好，状态机直接用 */
+      lowConfidence: isLowConfidence(payload)
     },
+    /* 原始报文一并交出去：D3 去重要按 message_id 认报文，那是解析不出来、
+       也没法从 reading 反推的字段 */
+    payload: payload,
     mismatch: (reportedStatus !== undefined && String(reportedStatus).trim() !== LEVELS[level].label)
       ? '上报 status="' + reportedStatus + '"，本地按规则重算为 "' + LEVELS[level].label + '"，以本地结论为准'
       : null
@@ -378,24 +461,22 @@ function parseReading(topic, rawText) {
 }
 
 /* ============================================================
-   ③-b 历史记录落盘的数据结构（纯函数，不依赖小程序 API）
+   ③-b 会话内记录的数据结构（纯函数，不依赖小程序 API）
    ------------------------------------------------------------
    记录只存「收到过什么」，字段与 web 监测台导出的 CSV 表头一致：
        time, zone, pm25, co2, crowdLevel, status
-   本端不提供 CSV 导出（导出只在 web 监测台），落盘是为了退出重进
-   之后卡片不至于一张白纸重来，也让「清空本地记录」有确切的清除对象。
+   本端不提供 CSV 导出（导出只在 web 监测台）；四端一律不落盘，
+   记录只留在内存里，重进小程序即全部清零。
    ============================================================ */
 
-var HISTORY = {
-  key: 'airguard.history.mobile.v1',   // 与 web / map3d 各自独立，不互相覆盖
-  limit: 5000,                         // 最多保留 5000 条，超出丢最旧的
-  debounceMs: 400                      // 写入节流，见 app 实例里的 scheduleSave
-};
+var RECORD_LIMIT = 5000;   // 内存里最多保留 5000 条，超出丢最旧的
 
 /* 全部历史记录；模块级单例，清空时就地改写而不是换新数组 */
 var historyRecords = [];
 
-/* 任意时间写法 → Date；解析不出来返回 null */
+/* 任意时间写法 → Date；解析不出来返回 null。
+   与 web 监测台的 parseStamp 同一口径——四端必须对同一个时间写法得到同一个
+   时刻，否则「乱序」判定在四端会得出不同结论。 */
 function toDate(value) {
   if (value === undefined || value === null || value === '') return null;
   if (typeof value === 'number') {
@@ -403,15 +484,37 @@ function toDate(value) {
     return isNaN(d0.getTime()) ? null : d0;
   }
   var raw = String(value).trim();
+  if (raw === '') return null;
+
+  /* 采集端把时间戳 stringify 成字符串（"1791091745" / "1791091745000"）：
+     与数字同等对待，不认这种写法乱序判定会悄悄退回「谁后到谁更新」 */
+  if (/^\d{10}$|^\d{13}$/.test(raw)) {
+    var n = Number(raw);
+    var d1 = new Date(n < 1e12 ? n * 1000 : n);
+    return isNaN(d1.getTime()) ? null : d1;
+  }
+
+  /* 带日期的时间：手写解析，不依赖各内核 Date 解析的宽松程度——
+     "2026-10-4 13:28:00"（不补零）在部分内核上解析不出来，
+     直接落回「接收时刻」，乱序判定同样会失效 */
+  var fm = /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
+  if (fm) {
+    var d2 = new Date(Number(fm[1]), Number(fm[2]) - 1, Number(fm[3]),
+                      Number(fm[4]), Number(fm[5]), Number(fm[6] || 0));
+    return isNaN(d2.getTime()) ? null : d2;
+  }
+
   // 只给了时分秒（如 "16:10:01"）：按今天补日期，否则恢复出来的时间点会跨天漂移
   var t = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (t) {
-    var d1 = new Date();
-    d1.setHours(Number(t[1]), Number(t[2]), Number(t[3] || 0), 0);
-    return d1;
+    var d3 = new Date();
+    d3.setHours(Number(t[1]), Number(t[2]), Number(t[3] || 0), 0);
+    return d3;
   }
-  var d = new Date(raw.replace(/\//g, '-').replace(' ', 'T'));
-  return isNaN(d.getTime()) ? null : d;
+
+  var ts = Date.parse(raw);
+  if (isNaN(ts)) ts = Date.parse(raw.replace(/-/g, '/'));   // 兼容部分内核的解析差异
+  return isNaN(ts) ? null : new Date(ts);
 }
 
 function pad2(n) { return n < 10 ? '0' + n : String(n); }
@@ -430,20 +533,7 @@ function fmtStampFull(value) {
          pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
 }
 
-/* 落盘时间戳 → 毫秒；读不出来返回 null */
-function parseStamp(s) {
-  var d = toDate(s);
-  return d ? d.getTime() : null;
-}
-
-/* 一条记录至少要有时间和区域，否则恢复时定位不到任何卡片 */
-function isValidRecord(r) {
-  return !!r && typeof r === 'object' &&
-         typeof r.time === 'string' && r.time &&
-         typeof r.zone === 'string' && r.zone;
-}
-
-/* 结论对象 → 落盘记录
+/* 结论对象 → 记录条目
    按报文原值存档，不做取整也不裁剪：记录是「收到过什么」的存档，
    与页面上经过归一化的展示值分开算。status 存上报值，不存本地重算结果。 */
 function toRecord(reading) {
@@ -459,9 +549,9 @@ function toRecord(reading) {
   };
 }
 
-/* 超出上限时丢最旧的。写入前和推入后都调，内存与存档不会各自漂移。 */
+/* 超出上限时丢最旧的 */
 function trimRecords(arr) {
-  var over = arr.length - HISTORY.limit;
+  var over = arr.length - RECORD_LIMIT;
   if (over > 0) arr.splice(0, over);
   return arr;
 }
@@ -600,6 +690,96 @@ function computePriority(g) {
 }
 
 /* ============================================================
+   ③-d D3 干预—验证—恢复（判定函数与消息去重，纯函数）
+   ------------------------------------------------------------
+   这是四端共用的规则层：状态机（在 App 实例里）只调用这里的判定，
+   不自己另算一套。「哪端算得对」这种事一旦说不清，四端就没法收敛了。
+   ============================================================ */
+
+/** FNV-1a 32 位哈希。给没有 message_id 的报文算载荷指纹用 ——
+ *  比 JSON.stringify 短且稳定，同一份载荷在任何一端都得到同一个值 */
+function fnv1a(str) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16);
+}
+
+/* 严重度：环境等级优先，人流次之。等级差一级压过人流差三级，
+   这样「重度污染 + 人流稀疏」永远排在「轻度污染 + 严重拥挤」前面 */
+function severityOf(levelRank, crowd) { return levelRank * 4 + crowd; }
+
+/* 异常：环境非正常，或人流达到拥挤及以上（2 / 3 档） */
+function isAbnormal(level, crowd) { return level !== 'good' || crowd >= 2; }
+
+/* 恢复阈值：环境回到正常，且人流不再是拥挤 */
+function isRecoveredEnv(level, crowd) { return level === 'good' && crowd <= 1; }
+
+/* 异常类型：环境等级与人流等级谁高算谁，平手时算环境异常 */
+function eventTypeOf(levelRank, crowd) {
+  return levelRank >= crowd ? '环境异常' : '人流拥挤';
+}
+
+/* 低可信度：报文带了 confidence 并且低于阈值。
+   字段缺失＝常规感知数据（可信），兼容现状 —— 现有采集端不发这个字段 */
+function isLowConfidence(payload) {
+  var c = toNum(field(payload, ['confidence', 'conf', 'credibility']));
+  return c !== null && c < EV_CONFIDENCE_FLOOR;
+}
+
+/* 优先关注理由：把「为什么是它」写成人话存进事件字段 */
+function eventReason(reading) {
+  var crowd = crowdScore(reading.crowdLevel);
+  return 'PM2.5 ' + reading.pm25 + ' μg/m³ / CO₂ ' + reading.co2 + ' ppm（' +
+         LEVELS[reading.level].label + '）+ 人流' +
+         CROWD_LEVELS[crowd] + ' ' + reading.crowdLevel +
+         ' 级 → 严重度 ' + severityOf(LEVELS[reading.level].rank, crowd);
+}
+
+/* 这条读数该配哪一组干预动作（异常类型决定组别） */
+function eventActionKey(reading) {
+  var rank = LEVELS[reading.level].rank;
+  var crowd = crowdScore(reading.crowdLevel);
+  if (eventTypeOf(rank, crowd) === '人流拥挤') {
+    // 判成人流拥挤时 crowd 必然 ≥ 2（更小的话环境分就压过它了），夹一下只是防御
+    return 'crowd' + (crowd < 2 ? 2 : crowd);
+  }
+  return reading.level;
+}
+
+/* 消息去重键。优先报文自带的 message_id；没有才用区域 + 时间 + 载荷指纹。
+   event_id 绝不参与去重 —— 它标记的是同一个「持续事件」，跨多条消息保持不变，
+   拿它去重会把同一事件后续的验证数据全部误杀 */
+function dedupeKey(payload, zoneId, reading) {
+  var mid = field(payload, ['message_id', 'messageid', 'msgid', 'msg_id']);
+  if (mid !== undefined && mid !== null && String(mid).trim() !== '') {
+    return zoneId + '|mid|' + String(mid).trim();
+  }
+  return zoneId + '|sum|' + fnv1a([
+    zoneId, reading.timeFull, reading.pm25, reading.co2, reading.crowdLevel, reading.level
+  ].join('|'));
+}
+
+/* 记一条去重键；返回 true 表示这条报文之前已经来过，本次不再生效 */
+function isDuplicate(key) {
+  if (Object.prototype.hasOwnProperty.call(seenSet, key)) return true;
+  seenSet[key] = 1;
+  seenKeys.push(key);
+  if (seenKeys.length > EV_DEDUPE_MAX) delete seenSet[seenKeys.shift()];
+  return false;
+}
+
+/* 区域中文名：事件卡片上要显示「宿舍区」，而不是 zone-n 这种代号 */
+function findZoneName(zoneId) {
+  for (var i = 0; i < ZONES.length; i++) {
+    if (ZONES[i].id === zoneId) return ZONES[i].name;
+  }
+  return '';
+}
+
+/* ============================================================
    ④ MQTT 客户端（基于 wx.connectSocket）
    ============================================================ */
 
@@ -638,7 +818,12 @@ function createMqttClient(config, handlers) {
       if (code === 0) {
         connected = true;
         handlers.onState('connected');
+        /* 两个主题各发一个 SUBSCRIBE：报文流 + 干预广播。
+           别端的干预要让本端同时进入「处理中」，漏订阅就收敛不了 */
         send(buildSubscribe(nextPacketId(), config.topic, config.qos));
+        if (config.interventionTopic) {
+          send(buildSubscribe(nextPacketId(), config.interventionTopic, config.qos));
+        }
         // 保活：按 keepalive 的 3/4 周期发 PINGREQ，防止服务端判定超时断连
         pingTimer = setInterval(function () { send(PACKET_PINGREQ); },
                                 Math.max(5, config.keepalive * 0.75) * 1000);
@@ -764,7 +949,16 @@ function createMqttClient(config, handlers) {
     stop: function () { closedByUser = true; close(true); handlers.onState('closed'); },
     isConnected: function () { return connected; },
     /* 小程序切后台可能被系统断开，回到前台时补一次连接 */
-    ensure: function () { if (!socket) { closedByUser = false; connect(); } }
+    ensure: function () { if (!socket) { closedByUser = false; connect(); } },
+
+    /* 上行 PUBLISH：D3 的干预广播走这里。
+       retain=true 让后接入的端（比如刚刷新的大屏）一连上就拿到当前状态。
+       未连接时返回 false 而不是静默丢弃 —— 调用方要能据此提示「只在本地生效」 */
+    publish: function (topic, payload, qos, retain) {
+      if (!connected) return false;
+      send(buildPublish(topic, payload, qos || 0, nextPacketId(), !!retain));
+      return true;
+    }
   };
 }
 
@@ -786,28 +980,36 @@ App({
     connText: '连接中',
     connDetail: '正在连接 ' + MQTT_CONFIG.url + ' …',
     zones: {},                                   // zoneId → 最新结论
-    counters: { messages: 0, rejected: 0 },
-    restoreInfo: null,                           // 启动时恢复到的条数 / 缓存区域数 / 最新时间
+    counters: { messages: 0, rejected: 0, duplicates: 0 },
     streaks: {},                                 // zoneId → 末尾连续异常条数
     perception: [],                              // 感知记录，最新在前，上限 PERCEPTION_LIMIT
     streakStart: {},                             // zoneId → 本轮连续异常首条记录的时刻（ms）
-    priority: { rows: [], winner: null }         // 优先关注打分结果
+    priority: { rows: [], winner: null },        // 优先关注打分结果
+    /* D3：事件表（最新在后）与当前事件索引。只活在内存里，重进小程序回到初始态 */
+    events: [],
+    activeEvents: {}                             // zoneId → 该区域当前事件
   },
 
   listeners: [],
   client: null,
-  storageOk: false,
-  saveTimer: null,
 
   onLaunch: function () {
     var that = this;
 
-    this.storageOk = this.probeStorage();
-    this.restoreHistory();       // 先回灌本地历史，页面 onLoad 时直接就能渲染出卡片
+    /* 不做任何恢复：卡片、事件表、D3 状态机全部只活在内存里，
+       重进小程序即回到「等第一条报文」，由本次会话新收到的数据重新建立
+       （跨端一致性靠 MQTT 干预广播收敛） */
 
     this.client = createMqttClient(MQTT_CONFIG, {
       onState: function (state, detail) { that.setState(state, detail); },
-      onMessage: function (topic, text) { that.ingest(topic, text); }
+      onMessage: function (topic, text) {
+        /* 干预广播与报文流共用一条连接，靠主题前缀分流 */
+        if (String(topic).indexOf(MQTT_CONFIG.interventionPrefix) === 0) {
+          that.onIntervention(text);
+          return;
+        }
+        that.ingest(topic, text);
+      }
     });
 
     this.client.start();
@@ -817,9 +1019,6 @@ App({
     // 小程序从后台回到前台：若连接已被系统回收则重连
     if (this.client) this.client.ensure();
   },
-
-  /* 退到后台可能随时被系统回收，补一次写入，保证不丢最后几百毫秒内的数据 */
-  onHide: function () { this.flushSave(); },
 
   /* 订阅状态变更；返回取消订阅函数 */
   subscribe: function (fn) {
@@ -873,6 +1072,39 @@ App({
     }
 
     var cached = !!(opts && opts.cached);
+
+    /* D3 去重：同一条消息多次到达只生效一次。
+       本地存档回灌不算「刚收到的报文」，不进去重表 —— 否则重进小程序时
+       回灌的那一条会把去重键占掉，随后真的收到同一条实时报文会被误判为重复 */
+    if (!cached) {
+      var key = dedupeKey(result.payload, result.reading.zoneId, result.reading);
+      if (isDuplicate(key)) {
+        g.counters.duplicates++;
+        result.reading.duplicate = true;
+        console.info('[AirGuard] 重复报文已忽略：' + result.reading.zoneId + ' · ' + key);
+        return;
+      }
+    }
+
+    /* ---- D3 消息健壮性：乱序消息不覆盖更新的实时状态 ----
+       报文时间早于本会话已入住的读数，就是「后到达的旧消息」。它照样算收到、
+       照样进历史与感知记录，但不回写实时读数、不动连续异常计数、不进趋势图，
+       也不能凭一个更早的时间去开新事件 —— 那同样是旧消息覆盖新状态。
+       跨会话不比较：存档读数标着 cached，设备时钟被重置过时仍以实时报文为准。 */
+    var prevReading = g.zones[result.reading.zoneId];
+    if (!cached && prevReading && !prevReading.cached && result.reading.ts < prevReading.ts) {
+      result.reading.outOfOrder = true;
+      addPerception(g, result.reading);
+      historyRecords.push(toRecord(result.reading));
+      trimRecords(historyRecords);
+      /* 只往已有事件的日志里补一笔；没有事件就不建 —— 旧消息不产生新状态 */
+      if (g.activeEvents[result.reading.zoneId]) this.applyEvent(result.reading);
+      g.clearNote = null;
+      g.counters.messages++;
+      this.notify();
+      return;
+    }
+
     result.reading.cached = cached;      // 一旦来了实时报文就自动脱掉缓存标记
     g.zones[result.reading.zoneId] = result.reading;
 
@@ -907,17 +1139,269 @@ App({
     computePriority(g);
     historyRecords.push(toRecord(result.reading));
     trimRecords(historyRecords);
-    this.scheduleSave();
+
+    /* D3：每条通过去重的实时报文推进一次事件状态机。
+       上面 cached 分支已经 return 了 —— 缓存回灌不推进 */
+    this.applyEvent(result.reading);
 
     g.clearNote = null;      // 收到实时报文，清空回执让位给正常状态
     g.counters.messages++;
     this.notify();
   },
 
-  /* ---------- 本地存储 ---------------------------------------------------- */
+  /* ---------- D3 干预—验证—恢复：事件状态机 -------------------------------
+   * 判定规则在 ③-d 节，这里只负责推进，状态只活在内存里。
+   * 唯一入口是 applyEvent：不管报文从哪来，状态每一次变化都要经过它，
+   * 别的函数不许直接写 ev.state。
+   * ---------------------------------------------------------------------- */
+
+  /* 事件日志：每条影响过判断的报文留一行，便于事后对账 */
+  pushLog: function (ev, reading, note) {
+    ev.log.push({
+      time: reading.timeFull || reading.time || '',
+      ts: reading.ts,
+      level: reading.level || '',
+      levelLabel: reading.level ? LEVELS[reading.level].label : '',
+      crowdLevel: reading.crowdLevel === undefined ? null : reading.crowdLevel,
+      note: note
+    });
+    if (ev.log.length > EV_LOG_MAX) ev.log.shift();
+  },
+
+  createEvent: function (reading) {
+    var rank = LEVELS[reading.level].rank;
+    var crowd = crowdScore(reading.crowdLevel);
+    var ev = {
+      event_id: 'evt-' + reading.zoneId + '-' + (++eventSeq) + '-' + reading.ts,
+      zoneId: reading.zoneId,
+      zoneName: findZoneName(reading.zoneId) || reading.zoneId,
+      startedAt: reading.timeFull,             // 事件开始时间
+      startedTs: reading.ts,
+      type: eventTypeOf(rank, crowd),          // 异常类型
+      priorityReason: eventReason(reading),    // 优先关注理由
+      userActions: [],                         // 用户干预动作记录
+      verifySamples: [],                       // 干预后多组验证数据集
+      state: EV_OPEN,                          // 当前事件状态
+      interventionAt: null,                    // 干预提交时刻
+      severityAtIntervention: null,
+      recoveredAt: null,                       // 恢复时间
+      outcome: '待处理',                        // 最终结果
+      manualReview: false,                     // 低可信度数据触发的「人工复核」标记
+      severity: severityOf(rank, crowd),
+      actionKey: eventActionKey(reading),
+      lastTs: reading.ts,                      // 已处理到的最新报文时刻，用于识别乱序 / 迟到
+      relapseSamples: 0,
+      log: []
+    };
+
+    var g = this.globalData;
+    this.pushLog(ev, reading, '监测捕获异常，事件建立');
+    /* 最新在前：存档按顺序取前 N 条就是最新的 N 条，恢复时每个区域
+       第一条遇到的也正好是它的当前事件 */
+    g.events.unshift(ev);
+    if (g.events.length > EVENTS.limit) g.events.length = EVENTS.limit;
+    g.activeEvents[ev.zoneId] = ev;
+    console.info('[AirGuard] 事件建立：' + ev.event_id + ' · ' + ev.type + ' · 严重度 ' + ev.severity);
+    return ev;
+  },
+
+  /** 事件机唯一入口。每条通过去重的实时报文进来一次。
+   *  乱序 / 迟到（时间戳早于本事件已处理的最后一条）不参与状态判断，只入日志 */
+  applyEvent: function (reading) {
+    var rank = LEVELS[reading.level].rank;
+    var crowd = crowdScore(reading.crowdLevel);
+    var g = this.globalData;
+    var ev = g.activeEvents[reading.zoneId] || null;
+
+    /* ---- 无事件：只有确实异常才建 ---- */
+    if (!ev) {
+      if (!isAbnormal(reading.level, crowd)) return null;
+      return this.createEvent(reading);
+    }
+
+    /* ---- 乱序 / 迟到：旧消息不能覆盖更新后的最新状态 ---- */
+    if (reading.ts < ev.lastTs) {
+      this.pushLog(ev, reading, '迟到/乱序消息，仅存档，不参与状态判断');
+      return ev;
+    }
+
+    /* 水位线对每条已通过前面检查的报文都推进，包括下面「已恢复」分支里的存档。
+       漏掉存档那一步，恢复之后到达的旧异常就会因为「比恢复时刻新」而开出一个
+       带着旧时间戳的新事件 —— 那正是「旧消息覆盖新状态」 */
+    ev.lastTs = reading.ts;
+
+    /* ---- 事件已恢复：迟到、重复消息都不回滚状态 ---- */
+    if (ev.state === EV_RECOVERED) {
+      if (isAbnormal(reading.level, crowd)) {
+        /* 恢复之后又出现新的异常 —— 这是新事件，不是旧事件回滚 */
+        return this.createEvent(reading);
+      }
+      this.pushLog(ev, reading, '事件已恢复，后续消息仅存档');
+      return ev;
+    }
+
+
+    /* ---- OPEN 待处理：数据只刷新严重度与理由，状态不动 ---- */
+    if (ev.state === EV_OPEN) {
+      ev.severity = severityOf(rank, crowd);
+      ev.priorityReason = eventReason(reading);
+      ev.actionKey = eventActionKey(reading);
+      this.pushLog(ev, reading, '待处理中的数据更新');
+      return ev;
+    }
+
+    /* ---- HANDLING 处理中：只能由新监测数据判定，按钮到不了这里 ---- */
+
+    /* 低可信度感知数据不能促成恢复。若这条本可判恢复，标记人工复核并作废这条数据，
+       状态保持 HANDLING —— 宁可不恢复，也不能让一条不可信的数据把事件关掉 */
+    if (reading.lowConfidence) {
+      if (isRecoveredEnv(reading.level, crowd)) {
+        ev.manualReview = true;
+        ev.verifySamples.length = 0;
+        ev.outcome = '低可信度数据，已标记人工复核';
+      }
+      this.pushLog(ev, reading, '低可信度数据，不参与恢复判定');
+      return ev;
+    }
+
+    if (isRecoveredEnv(reading.level, crowd)) {
+      ev.manualReview = false;
+      ev.relapseSamples = 0;
+      ev.verifySamples.push({
+        time: reading.timeFull,
+        pm25: reading.pm25,
+        co2: reading.co2,
+        crowdLevel: reading.crowdLevel,
+        level: reading.level
+      });
+      /* 干预后的验证数据仍然留档（事件字段要求有「干预后验证数据集」），
+         但恢复不设门槛：第一条达标数据就判定恢复，不再累计条数 */
+      ev.state = EV_RECOVERED;
+      ev.recoveredAt = reading.timeFull;
+      ev.outcome = '已恢复';
+      this.pushLog(ev, reading, '收到正常监测数据，自动判定恢复');
+      console.info('[AirGuard] 事件已恢复：' + ev.event_id + ' · ' + ev.recoveredAt);
+      return ev;
+    }
+
+    /* 不达标：严重度高于干预那一刻才算恶化 */
+    ev.verifySamples.length = 0;
+    if (severityOf(rank, crowd) > ev.severityAtIntervention) {
+      ev.relapseSamples += 1;
+      if (ev.relapseSamples >= EV_RELAPSE_SAMPLES) {
+        ev.state = EV_OPEN;
+        ev.relapseSamples = 0;
+        ev.outcome = '干预无效，回退待处理';
+        ev.severity = severityOf(rank, crowd);
+        ev.priorityReason = eventReason(reading);
+        ev.actionKey = eventActionKey(reading);
+        this.pushLog(ev, reading, '连续 ' + EV_RELAPSE_SAMPLES + ' 组数据恶化，回退 OPEN');
+        console.info('[AirGuard] 干预无效，事件回退待处理：' + ev.event_id);
+      } else {
+        ev.outcome = '仍需关注';
+        this.pushLog(ev, reading, '数据恶化 ' + ev.relapseSamples + '/' + EV_RELAPSE_SAMPLES);
+      }
+    } else {
+      ev.relapseSamples = 0;
+      ev.outcome = '仍需关注';
+      this.pushLog(ev, reading, '数据未达标，继续观察');
+    }
+    return ev;
+  },
+
+  /** 提交干预动作。只有 OPEN 能提交；这里绝不会把状态置成 RECOVERED ——
+   *  恢复只能由后续新监测数据自动判定。返回事件对象表示成功，null 表示被拒 */
+  intervene: function (zoneId, actions, meta) {
+    var g = this.globalData;
+    var ev = g.activeEvents[zoneId];
+    if (!ev || ev.state !== EV_OPEN) return null;
+
+    var list = [];
+    for (var i = 0; i < (actions || []).length; i++) {
+      var a = actions[i];
+      if (typeof a === 'string' && a.trim() && list.indexOf(a) < 0) list.push(a);
+    }
+    if (!list.length) return null;
+
+    meta = meta || {};
+    ev.state = EV_HANDLING;
+    ev.userActions.push({
+      actions: list,
+      at: meta.at || fmtStampFull(Date.now()),
+      actor: meta.actor || '小程序'
+    });
+    ev.interventionAt = ev.userActions[ev.userActions.length - 1].at;
+    ev.severityAtIntervention = ev.severity;
+    ev.verifySamples.length = 0;
+    ev.relapseSamples = 0;
+    ev.manualReview = false;
+    ev.outcome = '干预已提交，等待新监测数据验证';
+    this.pushLog(ev, { timeFull: ev.interventionAt, ts: Date.now() },
+      '管理员提交干预：' + list.join(' / '));
+    this.notify();
+    return ev;
+  },
+
+  /* 页面点【执行干预】：本端状态机 + 向另外三端广播。
+     广播失败不算提交失败 —— 本端状态已经推进，只是别端收不到 */
+  submitIntervention: function (zoneId, actions) {
+    var ev = this.intervene(zoneId, actions, { actor: '小程序' });
+    if (ev) {
+      this.publishIntervention(ev, ev.userActions[ev.userActions.length - 1].actions);
+    }
+    return ev;
+  },
+
+  /** 收到别端广播来的干预（Web 大屏 / 3D 沙盘 / 移动端浏览器版）。
+   *  event_id 对得上、且本端该区域事件正处于 OPEN 才应用；其余一律忽略。
+   *  同一条干预重复到达是幂等的（第二次事件已经不是 OPEN，直接被挡） */
+  receiveIntervention: function (msg) {
+    if (!msg || msg.type !== 'intervention') return null;
+    var ev = this.globalData.activeEvents[msg.zoneId];
+    if (!ev || ev.state !== EV_OPEN) return null;
+    if (msg.event_id && msg.event_id !== ev.event_id) return null;
+    console.info('[AirGuard] 收到 ' + (msg.actor || '他端') + ' 的干预广播：' + msg.zoneId);
+    return this.intervene(msg.zoneId, msg.actions, { actor: msg.actor, at: msg.at });
+  },
+
+  /* MQTT 回调：干预广播的文本载荷 → 状态机 */
+  onIntervention: function (text) {
+    var msg;
+    try {
+      msg = JSON.parse(text);
+    } catch (e) {
+      console.warn('[AirGuard] 干预广播不是合法 JSON，已忽略：', text);
+      return;
+    }
+    this.receiveIntervention(msg);
+  },
+
+  /* 把本端的干预动作广播出去，让另外三端同时进入「处理中」。
+     固定 retain=true：后接入的端（比如刚刷新的大屏）一连上就能拿到当前状态 */
+  publishIntervention: function (ev, actions) {
+    if (!this.client || !this.client.isConnected()) {
+      console.warn('[AirGuard] MQTT 未连接，干预只在本地生效，未广播');
+      return false;
+    }
+    var msg = {
+      type: 'intervention',
+      event_id: ev.event_id,      // 收端据此判断这条广播属于哪个事件
+      zoneId: ev.zoneId,
+      actions: actions,
+      at: ev.interventionAt,
+      time: fmtStampFull(Date.now()),
+      actor: '小程序'
+    };
+    var ok = this.client.publish(MQTT_CONFIG.interventionPrefix + ev.zoneId,
+      JSON.stringify(msg), MQTT_CONFIG.qos, true);
+    if (ok) console.info('[AirGuard] 已广播干预：' + ev.zoneId + ' → ' + actions.join(' / '));
+    return ok;
+  },
+
+  /* ---------- 会话内记录（只存内存） -------------------------------------- */
 
   /* 供页面与自动化测试取用 */
-  HISTORY: HISTORY,
+  recordLimit: RECORD_LIMIT,
   historyRecords: historyRecords,
   historyCount: function () { return historyRecords.length; },
 
@@ -931,138 +1415,22 @@ App({
     spanText: spanText
   },
 
-  /* wx.setStorageSync 在存储被禁用 / 空间写满时会抛异常。先探测一次，
-     不可用就整体降级为「只存内存」，小程序其余功能照常运行。 */
-  probeStorage: function () {
-    try {
-      wx.setStorageSync('__airguard_probe__', '1');
-      wx.removeStorageSync('__airguard_probe__');
-      return true;
-    } catch (e) {
-      console.warn('[AirGuard] 本地存储不可用，历史记录只保留在内存中：', e && e.message);
-      return false;
-    }
-  },
+  /* D3 干预—验证—恢复：常量与只读入口（事件表在 globalData.events /
+     activeEvents，页面与联调都从这里读） */
+  EVENTS: EVENTS,
+  EV_OPEN: EV_OPEN,
+  EV_HANDLING: EV_HANDLING,
+  EV_RECOVERED: EV_RECOVERED,
+  EV_ACTIONS: EV_ACTIONS,
+  EV_LABEL: EV_LABEL,
+  recoverSamples: 1,
+  activeEvent: function (zoneId) { return this.globalData.activeEvents[zoneId] || null; },
 
-  loadHistory: function () {
-    if (!this.storageOk) return [];
-    var raw;
-    try {
-      raw = wx.getStorageSync(HISTORY.key);
-    } catch (e) {
-      return [];
-    }
-    if (!raw) return [];
-
-    // wx.getStorageSync 存进去是什么类型就取回什么类型，但存档可能被手工改过，
-    // 也可能是旧版本结构，所以两种形态都认，再逐条校验
-    var arr = raw;
-    if (typeof raw === 'string') {
-      try {
-        arr = JSON.parse(raw);
-      } catch (e2) {
-        console.warn('[AirGuard] 本地历史不是合法 JSON，已忽略：', e2 && e2.message);
-        return [];
-      }
-    }
-    if (!Array.isArray(arr)) return [];
-
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      if (isValidRecord(arr[i])) out.push(arr[i]);
-    }
-    return out.slice(-HISTORY.limit);
-  },
-
-  saveHistory: function () {
-    if (!this.storageOk) return;
-    trimRecords(historyRecords);
-    try {
-      wx.setStorageSync(HISTORY.key, historyRecords);
-      return;
-    } catch (e) {
-      // 配额写满：丢掉一半最旧的再试一次。存档失败不该影响实时监测，所以不往上抛。
-      console.warn('[AirGuard] 本地存储写入失败，丢弃最旧的记录后重试：', e && e.message);
-    }
-    historyRecords.splice(0, Math.ceil(historyRecords.length / 2));
-    try {
-      wx.setStorageSync(HISTORY.key, historyRecords);
-    } catch (e2) {
-      console.error('[AirGuard] 本地存储仍无法写入，本次存档跳过：', e2 && e2.message);
-    }
-  },
-
-  /* 每条报文都同步写一次存储会卡住渲染（JSON 序列化 + 磁盘写），所以攒一小段
-     时间再写；退到后台时由 onHide → flushSave 补一次。 */
-  scheduleSave: function () {
-    var that = this;
-    if (!this.storageOk || this.saveTimer) return;
-    this.saveTimer = setTimeout(function () {
-      that.saveTimer = null;
-      that.saveHistory();
-    }, HISTORY.debounceMs);
-  },
-
-  flushSave: function () {
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
-    this.saveHistory();
-  },
-
-  /* 启动时把本地记录回灌成页面状态：每张卡片取该区域最后一次读数。
-     复用 ingest 的 cached 分支，卡片渲染逻辑与实时数据完全一致。 */
-  restoreHistory: function () {
-    var saved = this.loadHistory();
-    if (!saved.length) return 0;
-
-    // 就地改写而不是 historyRecords = saved：清空与写入都依赖同一个数组引用
-    historyRecords.length = 0;
-    for (var i = 0; i < saved.length; i++) historyRecords.push(saved[i]);
-
-    // 每个区域取「最后一条带有效读数的记录」。全空的记录回灌进去会被
-    // ingest 判为无效，反而把「串区拦截」计数刷上去。
-    var lastByZone = {};
-    var lastTs = 0;
-    for (var j = 0; j < saved.length; j++) {
-      var rec = saved[j];
-      if (toNum(rec.pm25) === null && toNum(rec.co2) === null) continue;
-      lastByZone[rec.zone] = rec;
-      var ts = parseStamp(rec.time);
-      if (ts !== null && ts > lastTs) lastTs = ts;
-    }
-
-    var restored = 0;
-    for (var k = 0; k < ZONES.length; k++) {
-      var zid = ZONES[k].id;
-      var r = lastByZone[zid];
-      if (!r) continue;
-      this.ingest('Airguard/' + zid + '/data', JSON.stringify(r), { cached: true });
-      restored++;
-    }
-
-    this.globalData.restoreInfo = {
-      count: saved.length,
-      cachedCount: restored,
-      lastStamp: lastTs ? fmtStampFull(lastTs).slice(5) : '未知'   // 去掉年份，页脚放得下
-    };
-    console.info('[AirGuard] 已从本地存储恢复 ' + saved.length + ' 条历史记录，回灌 ' + restored + ' 个区域');
-    return saved.length;
-  },
-
-  /* 清空本地记录：内存 + 本地存储一起清，页面回到「等待推送」 */
+  /* 清空记录：只清内存，页面回到「等待推送」（四端都不落盘，没有本地存档可删） */
   clearHistory: function () {
     var n = historyRecords.length;
 
     historyRecords.length = 0;
-    this.globalData.restoreInfo = null;
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
-
-    if (this.storageOk) {
-      try {
-        wx.removeStorageSync(HISTORY.key);
-      } catch (e) {
-        console.warn('[AirGuard] 清除本地存储失败：', e && e.message);
-      }
-    }
 
     // 就地删除而不是 g.zones = {}：页面或订阅回调可能已经持有这个对象，
     // 换新对象会让它们继续看到旧数据
@@ -1086,10 +1454,10 @@ App({
     g.priority.winner = null;
     g.counters.messages = 0;
     g.counters.rejected = 0;
-    g.clearNote = '本地记录已清空';
+    g.clearNote = '记录已清空';
     this.notify();
 
-    console.info('[AirGuard] 已清空 ' + n + ' 条本地记录');
+    console.info('[AirGuard] 已清空 ' + n + ' 条记录（只清内存，本端不落盘）');
     return n;
   }
 });

@@ -532,3 +532,208 @@
 }
 
 .clear-btn::after { border: none; }   /* 去掉小程序 button 的默认边框 */
+
+/* ==================================================================
+   D3 干预—验证—恢复：区域告警卡片
+   状态色由 .state-OPEN / .state-HANDLING / .state-RECOVERED 切换，
+   与 Web 大屏 / 浏览器版同色（红待处理 / 黄处理中 / 绿已恢复）。
+   干预动作全部是文字，不画任何图标。
+   ================================================================== */
+
+.event-box {
+  --ev: #d03b3b;                    /* 状态主色 */
+  --ev-tint: rgba(208, 59, 59, .07);
+  --ev-ink: #a83232;                /* 状态色做文字时用加深版，保证在白底上达标 */
+
+  margin-top: 22rpx;
+  padding: 20rpx 22rpx 22rpx;
+  border-radius: 18rpx;
+  background: var(--ev-tint);
+  border: 2rpx solid var(--ev);
+  border-left-width: 8rpx;
+}
+
+.event-box.state-HANDLING {
+  --ev: #e0a008;
+  --ev-tint: rgba(224, 160, 8, .10);
+  --ev-ink: #7a5c28;
+}
+
+.event-box.state-RECOVERED {
+  --ev: #0ca30c;
+  --ev-tint: rgba(12, 163, 12, .07);
+  --ev-ink: #0a6b0a;
+}
+
+.event-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 状态胶囊：色块 + 文字同时出现，颜色不单独承载语义 */
+.event-state {
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--ev);
+}
+
+.event-type {
+  font-size: 24rpx;
+  color: #52514e;
+}
+
+.event-live {
+  display: block;
+  margin-top: 14rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: #52514e;
+}
+
+.event-meta { margin-top: 16rpx; }
+
+.event-meta-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 8rpx;
+}
+
+.event-meta-k {
+  flex: none;
+  width: 150rpx;
+  font-size: 23rpx;
+  color: #6b6a66;
+}
+
+.event-meta-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: #3a3936;
+}
+
+/* --- 待处理：干预动作多选 --- */
+
+.event-actions {
+  margin-top: 18rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 14rpx;
+  background: #ffffff;
+}
+
+.event-actions-title {
+  display: block;
+  font-size: 23rpx;
+  color: #6b6a66;
+}
+
+.event-action {
+  display: flex;
+  align-items: center;
+  min-height: 76rpx;               /* 手指点得中，比 44px 略宽 */
+  margin-top: 10rpx;
+}
+
+.event-tick {
+  flex: none;
+  width: 36rpx;
+  height: 36rpx;
+  margin-right: 16rpx;
+  border: 2rpx solid #c2cad4;
+  border-radius: 8rpx;
+  font-size: 26rpx;
+  line-height: 34rpx;
+  text-align: center;
+  color: #ffffff;
+}
+
+.event-action.picked .event-tick {
+  background: var(--ev);
+  border-color: var(--ev);
+}
+
+.event-action-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  color: #3a3936;
+}
+
+.event-action.picked .event-action-text {
+  font-weight: 500;
+  color: var(--ev-ink);
+}
+
+.event-submit {
+  margin-top: 18rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--ev);
+  border-radius: 14rpx;
+}
+
+.event-submit::after { border: none; }   /* 去掉小程序 button 的默认边框 */
+
+/* 一条都没勾时不可点：灰底而不是半透明红，避免看起来像能点的 */
+.event-submit[disabled] {
+  color: #ffffff;
+  background: #d8dde4;
+}
+
+/* --- 处理中：只读回执 --- */
+
+.event-done {
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 14rpx;
+  background: #ffffff;
+}
+
+.event-done-title {
+  display: block;
+  font-size: 23rpx;
+  color: #6b6a66;
+}
+
+.event-done-row { margin-top: 10rpx; }
+
+.event-done-time,
+.event-done-actor {
+  margin-right: 14rpx;
+  font-size: 22rpx;
+  color: #6b6a66;
+}
+
+.event-done-list {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 25rpx;
+  font-weight: 500;
+  color: #3a3936;
+}
+
+.event-hint {
+  display: block;
+  margin-top: 14rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: #52514e;
+}
+
+.event-outcome {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 23rpx;
+  color: var(--ev-ink);
+}
+
+/* 人工复核是要人去处理的事，加重一点，别被当成一行普通说明 */
+.event-review { font-weight: 600; }

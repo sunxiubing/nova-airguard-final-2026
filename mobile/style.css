@@ -542,6 +542,178 @@ code { font-family: var(--mono); }
 .action-list li { margin: 0; }
 .action-list li + li { margin-top: 2px; }
 
+/* ============================ D3 事件卡片 ============================
+   干预—验证—恢复：每栋楼一条，就挂在该楼栋的监测卡片里。
+   状态色只表示事件状态（红=待处理 / 黄=处理中 / 绿=已恢复），
+   级别色仍然由卡片顶部的胶囊与色条承担，两套颜色各说各的事。
+   ==================================================================== */
+
+.event-box {
+  margin-top: 11px;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--event-color, var(--ink-muted));
+}
+.event-box[hidden] { display: none; }
+
+.event-box[data-state="OPEN"]      { --event-color: #d03b3b; --event-tint: #fdf3f3; --event-ink: #a31414; }
+.event-box[data-state="HANDLING"]  { --event-color: #e0a008; --event-tint: #fff9ec; --event-ink: #7d5800; }
+.event-box[data-state="RECOVERED"] { --event-color: #0ca30c; --event-tint: #f1faf1; --event-ink: #056b05; }
+
+.event-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.event-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--event-ink, var(--ink-1));
+  background: var(--event-tint, var(--surface));
+  border: 1px solid var(--border);
+}
+.event-state::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--event-color, var(--ink-muted));
+}
+
+.event-type {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.event-live {
+  margin: 0 0 7px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.event-meta {
+  margin: 0 0 7px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.event-meta > div {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+}
+.event-meta dt {
+  flex: 0 0 74px;
+  color: var(--ink-muted);
+}
+.event-meta dd {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--ink-1);
+  word-break: break-word;
+}
+
+.event-actions {
+  margin: 0 0 9px;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.event-actions legend {
+  padding: 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.event-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;               /* 手指点得中，不靠精确瞄准 */
+  font-size: 13.5px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.event-action input {
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  accent-color: var(--event-color, var(--brand));
+}
+
+.event-submit {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--event-color, var(--brand));
+  border-radius: var(--radius-sm);
+  background: var(--event-color, var(--brand));
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.event-submit[disabled] {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.event-submit:active:not([disabled]) { transform: translateY(1px); }
+
+.event-done {
+  margin-bottom: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--event-tint, var(--surface));
+  border: 1px solid var(--border);
+}
+.event-done h4 {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+.event-done-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.event-done-time { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.event-done-actor { color: var(--ink-muted); }
+.event-done-list { flex: 1 1 100%; color: var(--ink-1); font-weight: 600; }
+
+.event-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.event-outcome {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.event-review { color: var(--event-ink, var(--ink-1)); font-weight: 700; }
+
 /* ============================ 空状态 / 页脚 ============================ */
 
 .empty-hint {

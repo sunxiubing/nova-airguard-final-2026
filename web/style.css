@@ -270,6 +270,7 @@ code { font-family: var(--mono); }
   grid-template-areas:
     "kpi      kpi"
     "priority priority"
+    "events   events"
     "zones    heat"
     "trend    alerts";
   gap: var(--gap);
@@ -279,6 +280,7 @@ code { font-family: var(--mono); }
 
 .kpi-panel      { grid-area: kpi; }
 .priority-panel { grid-area: priority; }
+.event-panel    { grid-area: events; }
 .zones-panel    { grid-area: zones; }
 .heat-panel     { grid-area: heat; }
 .trend-panel    { grid-area: trend; }
@@ -389,6 +391,167 @@ code { font-family: var(--mono); }
 /* 胜出行加重：理由列已经写明了为什么，这里只是让它在表格里跳出来 */
 .priority-table tbody tr[data-win="1"] { background: #fdf6ee; }
 .priority-table tbody tr[data-win="1"] td:first-child { font-weight: 650; }
+
+/* ==================== 干预 — 验证 — 恢复（D3） ====================
+   三档状态各一套配色，与 3D 端的外圈光晕一一对应：
+   OPEN 红 / HANDLING 黄 / RECOVERED 绿。颜色只表示状态，不表示级别。 */
+
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.event-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ev-accent, #9aa6b4);
+  border-radius: var(--radius);
+  background: var(--ev-bg, #fff);
+  padding: 12px 14px 14px;
+  min-width: 0;
+}
+
+.event-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* 状态徽标：卡片标题本身，用状态色而不是级别色 */
+.event-state {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--ev-accent, #9aa6b4);
+  white-space: nowrap;
+}
+
+.event-zone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.event-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+}
+
+.event-meta > div { display: flex; gap: 8px; }
+.event-meta dt { color: var(--ink-muted); flex: 0 0 auto; min-width: 76px; }
+.event-meta dd { margin: 0; color: var(--ink-2); }
+
+/* 实时监测数据行：异常类型与当前读数 */
+.event-live {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.event-live b { color: var(--ink-1); }
+.event-live-time { color: var(--ink-muted); }
+
+/* ---- 干预动作多选 ---- */
+.event-actions {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+  margin: 0 0 10px;
+}
+.event-actions legend {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 0 4px;
+}
+.event-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.event-action input { accent-color: var(--ev-accent, #c2410c); margin: 0; }
+
+.event-submit {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  color: #fff;
+  background: var(--ev-accent, #c2410c);
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.event-submit:disabled { background: #c9cfd6; cursor: not-allowed; }
+
+/* ---- 已执行干预动作列表（HANDLING 只读） ---- */
+.event-done { margin: 0 0 10px; }
+.event-done h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.event-done-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12.5px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border);
+}
+.event-done-time { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.event-done-actor { color: var(--ink-muted); }
+.event-done-list { color: var(--ink-1); font-weight: 550; }
+
+.event-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--ev-bg, #f6f7f9);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+.event-outcome {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.event-review { color: #b45309; }
+
+/* 状态配色：卡片左边框 / 徽标 / 按钮共用 --ev-accent，背景用极浅的同色 */
+.event-card[data-state="OPEN"] {
+  --ev-accent: #d03b3b; --ev-bg: #fef6f6;
+  background: #fff;
+}
+.event-card[data-state="HANDLING"] {
+  --ev-accent: #d99a08; --ev-bg: #fdf8ee;
+  background: #fff;
+}
+.event-card[data-state="RECOVERED"] {
+  --ev-accent: #0ca30c; --ev-bg: #f4faf4;
+  background: #fff;
+}
+.event-card[data-state="OPEN"] .event-hint { background: #fef6f6; }
+.event-card[data-state="HANDLING"] .event-hint { background: #fdf8ee; }
 
 /* ============================ 概览统计 ============================ */
 
@@ -813,7 +976,7 @@ code { font-family: var(--mono); }
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "kpi" "priority" "zones" "heat" "trend" "alerts";
+    grid-template-areas: "kpi" "priority" "events" "zones" "heat" "trend" "alerts";
   }
   .zone-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
   .kpi-row { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }

@@ -145,6 +145,95 @@
             </view>
           </view>
 
+          <!-- ==================== D3 干预—验证—恢复 ====================
+               本区域自己的告警卡片：干预动作全部在这块里用文字完成，
+               不画任何图标。状态色由 state-{{state}} 控制：待处理红 / 处理中黄 / 已恢复绿 -->
+          <view class="event-box state-{{item.event.state}}" wx:if="{{item.event}}">
+
+            <view class="event-head">
+              <text class="event-state">{{item.event.stateLabel}}</text>
+              <text class="event-type">{{item.event.type}}</text>
+            </view>
+
+            <!-- 实时监测数据：不用回头看上面的指标 -->
+            <text class="event-live">{{item.event.liveLine}}</text>
+
+            <!-- ---- 待处理：唯一可交互的状态 ---- -->
+            <block wx:if="{{item.event.isOpen}}">
+              <view class="event-meta">
+                <view class="event-meta-row">
+                  <text class="event-meta-k">异常类型</text>
+                  <text class="event-meta-v">{{item.event.type}}</text>
+                </view>
+                <view class="event-meta-row">
+                  <text class="event-meta-k">事件开始</text>
+                  <text class="event-meta-v">{{item.event.startedAt}}</text>
+                </view>
+                <view class="event-meta-row">
+                  <text class="event-meta-k">优先关注理由</text>
+                  <text class="event-meta-v">{{item.event.priorityReason}}</text>
+                </view>
+              </view>
+
+              <view class="event-actions">
+                <text class="event-actions-title">选择干预动作（可多选多条）</text>
+                <view class="event-action {{act.checked ? 'picked' : ''}}"
+                      wx:for="{{item.event.options}}"
+                      wx:for-item="act"
+                      wx:key="value"
+                      data-zone="{{item.id}}"
+                      data-value="{{act.value}}"
+                      bindtap="onToggleAction">
+                  <view class="event-tick">{{act.checked ? '✓' : ''}}</view>
+                  <text class="event-action-text">{{act.value}}</text>
+                </view>
+              </view>
+
+              <button class="event-submit"
+                      type="button"
+                      disabled="{{!item.event.canSubmit}}"
+                      data-zone="{{item.id}}"
+                      bindtap="onSubmitIntervention">执行干预</button>
+            </block>
+
+            <!-- ---- 处理中：只读，页面上没有手动恢复入口 ---- -->
+            <block wx:elif="{{item.event.isHandling}}">
+              <view class="event-done">
+                <text class="event-done-title">已执行干预动作</text>
+                <view class="event-done-row"
+                      wx:for="{{item.event.done}}"
+                      wx:for-item="d"
+                      wx:key="at">
+                  <text class="event-done-time">{{d.at}}</text>
+                  <text class="event-done-actor">{{d.actor}}</text>
+                  <text class="event-done-list">{{d.actions}}</text>
+                </view>
+              </view>
+              <text class="event-hint">等待新监测数据自动判定恢复（1 条正常数据即恢复），不可手动恢复。</text>
+              <text class="event-outcome {{item.event.review ? 'event-review' : ''}}">{{item.event.outcomeLine}}</text>
+            </block>
+
+            <!-- ---- 已恢复：告警卡片收尾，只留一条只读回执 ---- -->
+            <block wx:else>
+              <view class="event-meta">
+                <view class="event-meta-row">
+                  <text class="event-meta-k">恢复时间</text>
+                  <text class="event-meta-v">{{item.event.recoveredAt}}</text>
+                </view>
+                <view class="event-meta-row">
+                  <text class="event-meta-k">最终结果</text>
+                  <text class="event-meta-v">{{item.event.outcome}}</text>
+                </view>
+                <view class="event-meta-row">
+                  <text class="event-meta-k">干预动作</text>
+                  <text class="event-meta-v">{{item.event.doneText}}</text>
+                </view>
+              </view>
+              <text class="event-hint">事件已恢复，告警卡片自动关闭。</text>
+            </block>
+
+          </view>
+
         </view>
       </view>
 

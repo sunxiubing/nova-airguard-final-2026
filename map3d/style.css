@@ -990,6 +990,134 @@ html, body {
 }
 
 /* ==========================================================================
+   D3 告警卡片（干预 — 验证 — 恢复）
+   三档状态各一套强调色，与卡片标题、建筑外圈光晕一一对应：
+   OPEN 红 / HANDLING 黄 / RECOVERED 绿。颜色只表示状态，不表示级别。
+   ======================================================================== */
+
+.tip-event {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+  --ev-accent: #9aa6b4;
+}
+.tip-event[hidden] { display: none; }
+.tip-event[data-state="OPEN"]      { --ev-accent: #d32f2f; }
+.tip-event[data-state="HANDLING"]  { --ev-accent: #d99a08; }
+.tip-event[data-state="RECOVERED"] { --ev-accent: #0ca30c; }
+
+.tip-event-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.tip-event-state {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--ev-accent);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.tip-event-unpin {
+  margin-left: auto;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.tip-event-unpin:hover { color: var(--ink-1); border-color: var(--ink-3); }
+
+.tip-event-row {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.tip-event-row dt { flex: none; color: var(--ink-3); }
+.tip-event-row dd { margin: 0; color: var(--ink-1); }
+
+.tip-event-actions {
+  margin: 8px 0 8px;
+  padding: 7px 9px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.tip-event-actions legend {
+  padding: 0 4px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.tip-event-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.tip-event-action input { margin: 0; accent-color: var(--ev-accent); }
+
+.tip-event-submit {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--ev-accent);
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.tip-event-submit:disabled { background: #c9cfd6; cursor: not-allowed; }
+
+.tip-event-done { margin: 0 0 6px; }
+.tip-event-done-title {
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.tip-event-done-row {
+  margin: 0 0 3px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-1);
+}
+
+.tip-event-hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: var(--tint, rgba(0, 0, 0, 0.035));
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.tip-event-outcome {
+  margin: 5px 0 0;
+  font-size: 10.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 钉住后面板停在原地，给个视觉锚点提示「它现在是固定的」 */
+.tip.is-pinned {
+  border-color: #c2410c;
+  box-shadow: 0 0 0 2px rgba(194, 65, 12, 0.14), 0 18px 40px rgba(15, 23, 42, 0.16);
+}
+
+/* ==========================================================================
    操作提示
    ======================================================================== */
 

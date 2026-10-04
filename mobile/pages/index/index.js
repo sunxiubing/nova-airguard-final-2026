@@ -8,6 +8,68 @@
 var app = null;          // onLoad 时通过 getApp() 取得
 var unsubscribe = null;  // 取消订阅句柄，onUnload 时释放
 
+/* D3 干预动作的勾选状态：zoneId → 已勾选、还没提交的动作数组。
+   卡片每次 sync 都会整体重建，勾选存在视图模型里会被抹掉，
+   必须放在外边 —— 这与浏览器版把 pendingActions 放在卡片渲染之外是同一个理由 */
+var pendingActions = {};
+
+/* 组装 D3 事件卡片视图模型。没有事件返回 null —— 视图里整块不出现。
+   文案与 Web 大屏 / 浏览器版逐字一致，五端并行时对不上能立刻看出是哪端错了。 */
+function buildEvent(zoneId, ev) {
+  if (!ev) return null;
+
+  var data = app.globalData.zones[zoneId] || null;
+  var vm = {
+    eventId: ev.event_id,
+    state: ev.state,
+    stateLabel: app.EV_LABEL[ev.state],
+    type: ev.type,
+    isOpen: ev.state === app.EV_OPEN,
+    isHandling: ev.state === app.EV_HANDLING,
+    startedAt: ev.startedAt,
+    priorityReason: ev.priorityReason,
+    recoveredAt: ev.recoveredAt || '—',
+    outcome: ev.outcome,
+    review: !!ev.manualReview,
+    /* 恢复不设门槛（1 条正常数据即恢复），所以页面上不再有「验证进度」，
+       这一行只交代当前进展与最终结果 */
+    outcomeLine: ev.outcome + (ev.manualReview ? ' · 已标记人工复核' : ''),
+    liveLine: data
+      ? 'PM2.5 ' + (data.pm25 === null ? '—' : data.pm25) + ' μg/m³ · CO₂ ' +
+        (data.co2 === null ? '—' : data.co2) + ' ppm · 人流' + data.crowdText +
+        ' · ' + app.LEVELS[data.level].label + ' · ' + app.formatTime(data.time)
+      : '等待 ' + zoneId + ' 的读数…',
+    done: [],
+    doneText: '—',
+    options: [],
+    canSubmit: false
+  };
+
+  for (var i = 0; i < ev.userActions.length; i++) {
+    vm.done.push({
+      at: ev.userActions[i].at,
+      actor: ev.userActions[i].actor,
+      actions: ev.userActions[i].actions.join(' / ')
+    });
+  }
+  if (vm.done.length) {
+    vm.doneText = vm.done.map(function (d) { return d.actions; }).join('；');
+  }
+
+  /* 干预选项只在待处理状态下出现 —— 处理中与已恢复都是只读的，
+     页面上任何状态下都不提供「手动恢复」入口 */
+  if (vm.isOpen) {
+    var list = app.EV_ACTIONS[ev.actionKey] || [];
+    var picked = pendingActions[zoneId] || (pendingActions[zoneId] = []);
+    for (var j = 0; j < list.length; j++) {
+      vm.options.push({ value: list[j], checked: picked.indexOf(list[j]) >= 0 });
+    }
+    vm.canSubmit = picked.length > 0;
+  }
+
+  return vm;
+}
+
 /* 组装卡片视图模型 */
 function buildCard(meta, data, index) {
   var vm = {
@@ -24,7 +86,10 @@ function buildCard(meta, data, index) {
     statusText: '等待数据',
     crowdText: '等待数据',
     timeText: '—',
-    actions: []
+    actions: [],
+    /* D3 事件卡片：该区域自己的告警卡片，干预动作全部在里面用文字完成。
+       没有事件时为 null，模板里整块不渲染 */
+    event: buildEvent(meta.id, app.activeEvent(meta.id))
   };
 
   if (data) {
@@ -133,6 +198,48 @@ Page({
     wx.stopPullDownRefresh();
   },
 
+  /* 勾选 / 取消一条干预动作。只有待处理状态能改选 —— 处理中与已恢复都是只读的 */
+  onToggleAction: function (e) {
+    if (!app) return;
+
+    var zoneId = e.currentTarget.dataset.zone;
+    var value = e.currentTarget.dataset.value;
+    var ev = app.activeEvent(zoneId);
+    if (!ev || ev.state !== app.EV_OPEN) return;
+
+    var list = pendingActions[zoneId] || (pendingActions[zoneId] = []);
+    var idx = list.indexOf(value);
+    if (idx >= 0) list.splice(idx, 1); else list.push(value);
+
+    this.sync();   // 只重建视图模型，勾选真身在上面那个数组里
+  },
+
+  /* 点【执行干预】：本端转「处理中」并广播给另外三端。
+     绝不会直接置成已恢复 —— 恢复只能等后续新监测数据自动判定 */
+  onSubmitIntervention: function (e) {
+    if (!app) return;
+
+    var zoneId = e.currentTarget.dataset.zone;
+    var actions = (pendingActions[zoneId] || []).slice();
+    if (!actions.length) {
+      wx.showToast({ title: '请先勾选干预动作', icon: 'none' });
+      return;
+    }
+
+    var ev = app.submitIntervention(zoneId, actions);
+    if (!ev) {
+      wx.showToast({ title: '该区域当前不是待处理状态', icon: 'none' });
+      return;
+    }
+
+    pendingActions[zoneId] = [];
+    this.sync();
+    wx.showToast({
+      title: (app.client && app.client.isConnected()) ? '已提交并广播' : '已提交（未连接 Broker）',
+      icon: 'none'
+    });
+  },
+
   /* 把共享状态同步到页面 */
   sync: function () {
     if (!app) return;
@@ -141,7 +248,6 @@ Page({
     var zones = [];
     var alerts = [];
     var reportedCount = 0;
-    var cachedCount = 0;
 
     for (var i = 0; i < app.ZONES.length; i++) {
       var meta = app.ZONES[i];
@@ -151,7 +257,6 @@ Page({
 
       if (data) {
         reportedCount++;
-        if (data.cached) cachedCount++;
         if (data.level !== 'good') {
           alerts.push({
             zoneId: meta.id,
@@ -172,14 +277,8 @@ Page({
       return a.order - b.order;
     });
 
-    // 缓存说明：恢复了多少条、还有几个区域是缓存读数、缓存到什么时候
-    var note = '';
-    if (g.restoreInfo && cachedCount > 0) {
-      note = '已恢复 ' + g.restoreInfo.count + ' 条本地历史 · ' +
-             cachedCount + ' 个区域为缓存读数（' + g.restoreInfo.lastStamp + '）';
-    } else if (g.clearNote) {
-      note = g.clearNote;
-    }
+    // 清空回执：收到下一条实时报文后由 app 侧自动让位
+    var note = g.clearNote || '';
 
     this.setData({
       conn: g.conn,
@@ -198,21 +297,21 @@ Page({
     });
   },
 
-  /* 清空本地记录：先问一次，再清存储与内存，页面回到等待推送 */
+  /* 清空记录：先问一次，再清内存，页面回到等待推送（本端不落盘） */
   onClearHistory: function () {
     if (!app) return;
     var that = this;
 
     wx.showModal({
-      title: '清空本地记录',
-      content: '将删除已保存的 ' + app.historyCount() + ' 条记录，并清空页面上的巡检卡片。此操作不可撤销。',
+      title: '清空记录',
+      content: '将清掉本次会话收到的 ' + app.historyCount() + ' 条记录，并清空页面上的巡检卡片。此操作不可撤销。',
       confirmText: '清空',
       confirmColor: '#d03b3b',
       success: function (res) {
         if (!res.confirm) return;
         app.clearHistory();
         that.sync();
-        wx.showToast({ title: '已清空本地记录', icon: 'none' });
+        wx.showToast({ title: '记录已清空', icon: 'none' });
       }
     });
   }

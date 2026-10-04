@@ -170,10 +170,21 @@
       <p class="tip-action-title">处置建议</p>
       <ul class="tip-action-list" id="tipActions"></ul>
     </div>
+
+    <!-- D3 干预—验证—恢复：告警卡片本体，干预动作全部在这里用文字呈现，
+         三维场景里不画任何干预图标（见 main.js 文件头的硬性约束） -->
+    <div class="tip-event" id="tipEvent" hidden>
+      <div class="tip-event-head">
+        <span class="tip-event-state" id="tipEventState"></span>
+        <button type="button" class="tip-event-unpin" id="tipEventUnpin"
+                hidden title="解除钉住（Esc）">✕</button>
+      </div>
+      <div class="tip-event-body" id="tipEventBody"></div>
+    </div>
   </div>
 
   <!-- ---------- 操作提示 ---------- -->
-  <p class="hint" id="hint">拖拽旋转 · 滚轮缩放 · 右键平移 · 悬浮楼宇查看详情</p>
+  <p class="hint" id="hint">拖拽旋转 · 滚轮缩放 · 右键平移 · 悬浮楼宇查看详情 · 点击楼宇钉住面板</p>
 
 </div>
 

@@ -1049,6 +1049,39 @@ h3.sub-head { margin: 26px 0 0; font-size: 14px; }
 }
 .perception-table .muted-cell { color: #898781; }
 footer.page { color: #898781; font-size: 12px; text-align: center; padding-top: 6px; }
+
+/* ---- 板块 7：D3 事件五步流程表 ---- */
+.ev-card {
+  border: 1px solid #e6e8eb; border-left: 4px solid #fab219; border-radius: 10px;
+  padding: 12px 14px 8px; margin: 14px 0 0; background: #fcfcfb;
+}
+.ev-card.handling { border-left-color: #e08b21; background: #fffaf2; }
+.ev-card.recovered { border-left-color: #26a177; background: #f6fbf8; }
+.ev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ev-head b { font-size: 14px; }
+.ev-type { color: #52514e; font-size: 12.5px; }
+.ev-id { color: #898781; font-size: 11.5px; font-family: Consolas, "Courier New", monospace; }
+.ev-when { color: #898781; font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+table.ev-flow { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.ev-flow th {
+  font-size: 12px; font-weight: 600; color: #52514e; text-align: left;
+  padding: 6px 8px; background: #f4f5f3; border: 1px solid #e9eae7;
+}
+table.ev-flow td {
+  font-size: 12.2px; line-height: 1.55; padding: 7px 8px; vertical-align: top;
+  border: 1px solid #e9eae7; color: #3f3f3c;
+}
+table.ev-flow td.done { background: #f3faf4; }
+table.ev-flow td.active { background: #fff6e9; }
+table.ev-flow td.none { color: #a8a7a2; background: #fbfbfa; }
+.ev-warn { margin: 8px 0 0; color: #b45309; font-size: 12.2px; }
+.ev-card code {
+  background: #f2f4f3; padding: 1px 6px; border-radius: 5px;
+  font-size: 11.8px; font-family: Consolas, "Courier New", monospace;
+}
+.ev-more { margin-top: 8px; }
+.ev-more summary { cursor: pointer; color: #898781; font-size: 12.3px; }
+.ev-more .score-table { margin-top: 8px; }
 """
 
 
@@ -1105,7 +1138,8 @@ def build_perception(rows: list) -> str:
     </table>"""
 
 
-def build_html(df, stats, quality, charts, generated_at) -> str:
+def build_html(df, stats, quality, charts, generated_at, d5_panel: str = "",
+               d3_panel: str = "") -> str:
     zones = stats["zones"]
     n_abn = len(stats["abnormal"])
     focus = stats["focus"]
@@ -1265,6 +1299,24 @@ def build_html(df, stats, quality, charts, generated_at) -> str:
 {build_perception(stats['perception'])}
   </section>
 
+  <section class="card" id="sec6">
+    <h2><span class="num">6</span>固定规则 × 轻量 ML 辅助判断（D5）</h2>
+    <p class="lead">固定规则按 <b>绝对阈值</b>判（pm25 &gt; 150 重度 / &gt; 75 轻度、co2 &gt; 1500 通风不足风险，其余正常），
+       轻量 ML 按<b>本楼栋历史分布</b>判（中位数 + MAD 的稳健偏离度），两者并列展示、互不取代。
+       裁决采用<b>规则优先</b>：规则给最终建议，ML 只作参考并标注一致 / 不一致；
+       数据质量校验不通过时两边都不出结论。本节<b>先批量算完 data/history.csv 的全部历史行</b>，
+       之后每来一条 MQTT 新报文再叠一条进来——历史行与实时报文用同一套判定口径，不会两套标准。</p>
+{d5_panel}
+  </section>
+
+  <section class="card" id="sec7">
+    <h2><span class="num">7</span>D3 干预—验证—恢复：事件全流程（实时）</h2>
+    <p class="lead">每条事件一行五步：①异常数据→优先关注 ②选择干预动作 ③三端同步「处理中」
+      ④收新数据实时分析 ⑤自动判定。绿色=已完成，橙色=进行中，灰色=未发生。
+      随 MQTT 数据实时更新，状态机与四端逐字同款。</p>
+{d3_panel}
+  </section>
+
   <footer class="page">本报告由 python_analysis/analysis.py 自动生成 · 所有图表与结论均基于当前 CSV 实时计算</footer>
 </div>
 </body>
@@ -1279,11 +1331,18 @@ def build_html(df, stats, quality, charts, generated_at) -> str:
 _ENV_PRINTED = False
 
 
-def generate_report(open_browser: bool = True) -> dict:
+def generate_report(open_browser: bool = True, d5_panel: "str | None" = None,
+                    d5_engine=None, d3_engine=None) -> dict:
     """跑完整条分析链：data/history.csv ──► report/report.html。
 
     open_browser=False 供 serve.py 常驻调用——它自己管浏览器，
     每次重跑都开一个新标签页会刷屏。
+
+    板块 6（D5）怎么出内容：
+      · d5_engine 传入 serve.py 的实时引擎时，先用本次读到的 CSV 历史行预填它
+        （按去重键，重复预填不会灌两遍），再连实时报文一起渲染；
+      · 两者都为 None 时（单独双击 运行分析.bat），新建一个引擎、只用 CSV 历史行
+        批量算一遍规则 / ML / 一致性——报告一打开就有内容，不再是空白卡片。
 
     返回一份摘要（行数 / 区域数 / 异常数 / 报告体积 / 耗时），
     监视服务拿它写状态条；出错时照旧走 die() 抛 SystemExit。
@@ -1331,9 +1390,42 @@ def generate_report(open_browser: bool = True) -> dict:
     print("      " + " · ".join(f"{k}={'OK' if v else '跳过'}" for k, v in charts.items()))
 
     print("[4/4] 生成报告 …")
+    if d5_panel is None:
+        # D5 板块：CSV 历史行批量判定；d5 模块缺失也不影响主报告
+        try:
+            import d5
+
+            engine = d5_engine if d5_engine is not None else d5.D5Engine()
+            added = engine.seed_frame(df)
+            if d5_engine is None:
+                engine.note = (f"离线模式：板块 6 由 data/history.csv 的 {len(df)} 行历史数据"
+                               f"批量算出（本次新算 {added} 条），不依赖 Broker")
+            print(f"      D5 历史行预填 {added} 条 · 累计 {engine.received} 条"
+                  f"（不合格 {engine.rejected} · 重复 {engine.duplicates}）")
+            d5_panel = d5.render_panel(engine, engine.note)
+        except Exception as exc:  # noqa: BLE001
+            print(f"      D5 板块跳过：{type(exc).__name__}: {exc}")
+            d5_panel = '    <p class="empty">D5 模块不可用，本节暂缺。</p>'
+
+    # 板块 7：D3 事件全流程。历史行同样先批量灌一遍，实时数据与干预广播再往上叠
+    try:
+        import d3_event
+
+        d3 = d3_engine if d3_engine is not None else d3_event.D3Engine()
+        added = d3.seed_frame(df)
+        if d3_engine is None:
+            d3.note = (f"离线模式：事件由 data/history.csv 的 {len(df)} 行历史数据重建"
+                       f"（本次新处理 {added} 条），不依赖 Broker")
+        print(f"      D3 历史行预填 {added} 条 · 事件 {len(d3.events)} 个"
+              f"（OPEN {sum(1 for e in d3.events if e['state'] == 'OPEN')}）")
+        d3_panel = d3_event.render_panel(d3, d3.note)
+    except Exception as exc:  # noqa: BLE001
+        print(f"      D3 板块跳过：{type(exc).__name__}: {exc}")
+        d3_panel = '    <p class="empty">D3 模块不可用，本节暂缺。</p>'
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(
-        build_html(df, stats, quality, charts, started.strftime("%Y-%m-%d %H:%M:%S")),
+        build_html(df, stats, quality, charts, started.strftime("%Y-%m-%d %H:%M:%S"),
+                   d5_panel, d3_panel),
         encoding="utf-8",
     )
     size_kb = REPORT_PATH.stat().st_size / 1024
