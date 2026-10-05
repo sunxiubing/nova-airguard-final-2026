@@ -1,84 +1,76 @@
 # nova-airguard-final-2026
 
-## AirGuard: 校园多区域空气质量与人流监测预警协同系统
+## AirGuard：校园多区域空气质量与人流监测预警协同系统
 
-## 项目简介
-宿舍环境监测系统，基于MQTT，包含感知节点、Web监测页面、移动端、3D可视化模块。
+### 项目简介
+基于MQTT搭建的轻量数字孪生原型，包含感知采集、Web面板、移动端、3D可视化。实现PM2.5、CO₂、人流监测，支持阈值规则+ML偏离协同判定，三端同步，事件自动记录到报告。
 
-## 环境依赖
-- 系统：Windows10/11
-- MQTT服务：Mosquitto本地Broker
-- 测试工具：MQTTX
-- Python：python3，pandas（python_analysis模块）
+### 环境依赖
+- Windows10/11，VS Code + Live Server
+- MQTT：公网broker.emqx.io（本地Mosquitto备用）
+- MQTTX、Python3、pandas
 - 前端库：Three.js、mqtt.js、Chart.js
-- 编辑器：VS Code + Live Server
 
-## 目录说明
+### 目录
 - web：网页监测面板
 - mobile：移动端页面
-- map3d：三维可视化页面
+- map3d：3D可视化
 - python_analysis：数据分析脚本
-- docs：项目文档、答辩材料
-- evidence：实验证据目录
-    - Challenge：前置DormMate项目索引
-    - D1~D5：功能验证证据
-    - E1~E3：拓展验证证据
-    - Debug：调试记录
-    - Reproduce：复现步骤
-    - Open：开放拓展内容
+- evidence：实验证据
+  - Challenge：DormMate前置项目索引
+  - D1~D5、E1~E3：功能验证
+  - Debug：调试记录
+ 
 
+### 安装与启动
+1. 安装Mosquitto本地MQTT Broker
+2. 进入python_analysis目录，启用venv虚拟环境，安装Python依赖
+   ```bash
+    pip install pandas matplotlib scikit-learn
+3. 前端无需额外安装，用Live Server打开web/index.html
+4. 移动端：微信开发者工具导入mobile文件夹
+### 完整启动顺序（必须按顺序）
+ - 启动本地Mosquitto MQTT Broker
+​ - Live Server打开web/index.html启动Web监测台
+​ - 微信开发者工具启动mobile移动端小程序
+​ - 打开map3d里面3D数字孪生地图页面
+ - 运行python_analysis下数据分析服务
 
-## 依赖安装与配置
-1. 安装Mosquitto，开启WebSocket端口
-2. python_analysis目录：创建venv虚拟环境，安装pandas
-3. VS Code安装Live Server，用于网页预览
+### MQTT配置
+- TCP：broker.emqx.io:1883
+- WebSocket：wss://broker.emqx.io:8084/mqtt
+- Topic：`Airguard-x9k2m/<区域>/data`，订阅`Airguard-x9k2m/+/data`
+- 报文字段：zoneId, pm25, co2, crowdLevel, time
 
-## 完整启动顺序
-1. 启动本地Mosquitto MQTT Broker
-2. 启动python_analysis分析服务
-3. MQTTX连接本地Broker
-4. Live Server启动web监测台
-5. 打开mobile移动端页面
-6. 打开map3d 3D地图页面
-
-##  MQTT基础配置
-- Broker地址：`ws://127.0.0.1:8085`
-- Topic：`campus/building/sensor`
-- 报文字段：zone, pm25, co2, crowd_level,time
-
-##  生成测试数据
-MQTTX向topic发送JSON报文，示例重度污染：
+测试报文示例：
 `{"zoneId":"zone-w","pm25":343,"co2":1210,"crowdLevel":3,"status":"重度污染","time":"2026-10-4 17:27:00"}`
 
-##  Web—移动端实时同步验证
-MQTTX发送测试报文，同时打开web页面、mobile移动端页面。
-两者指标、告警状态、事件记录同步刷新。
+### D1-D5复现
+- D1：数据质量校验（合格/存疑/不合格）
+- D2：多区域告警，自动计算优先级
+- D3：事件流转：未处理→干预中→已恢复，记录干预操作
+- D4：固定阈值+ML稳健z值，规则优先裁决，|偏离度|>2.5视为和历史明显不同
+- D5：事件存入Report，3D场景联动灯带、告警标识
 
-##  D1-D5快速复现
-- D1：MQTT发送多组数据，验证数据质量校验（合格/存疑/不合格）
-- D2：多区域同时告警，自动计算优先级，标记优先关注区域
-- D3：事件流转：未处理 → 干预中 → 已恢复；支持干预动作记录
-- D4：固定规则与ML稳健z值并列展示；协同裁决采用规则优先
-- D5：整套事件全流程写入Report历史报告；map3d 3D模型联动更新灯带、告警文字、优先黄圈
+### E2 拓展功能
+Web支持语音指令、摄像头拍照存档、TTS朗读结论；麦克风/摄像头需本地http服务打开。
 
-##  预期运行结果
-1. 收到异常MQTT数据：对应教学楼标记优先关注；3D灯带变色，楼顶告警文字、优先黄圈显示。
-2. 前端执行干预动作（开启新风/喷雾降尘/限流疏导），状态切换【处理中】，web/mobile/3D同步更新。
-3. MQTT下发恢复数据，判定【已恢复】；3D灯带切回正常色，告警文字清除，优先黄圈移除。
-4. 事件完整链路存入Report，历史记录持续保存，不会覆盖旧记录。
+### 手机真机联调
+使用公网MQTT；微信开发者工具关闭urlCheck，仅用于开发调试。
 
-##  常见问题排查
-1. MQTT收不到数据：检查Mosquitto是否启动、WebSocket端口、topic名称一致。
-2. 3D模型不更新：确认MQTT连接成功，刷新Live Server页面。
-3. Report无新增记录：检查报文字段名称匹配，python分析服务正常运行。
-4. python报错：确认venv虚拟环境已激活，pandas安装完成。
+### 预期效果
+MQTT推送异常数据 → 页面告警、3D变色；标记干预；发送正常数据自动判定恢复；完整事件保存到报告。
 
-##  已知限制
-1. ML基于历史统计样本，若历史数据长期超标，会把超标识别为本区域常态，需配合固定规则综合判断。
-2. 仅支持zone-w、zone-n、zone-s三栋楼。。
+### 常见问题
+1. 收不到MQTT：检查网络、topic前缀`Airguard-x9k2m`，校园网可切热点测试
+2. 报告不新增：确认python服务正常，报文字段无误
+3. 语音/摄像头失效：用127.0.0.1本地http打开页面
 
-##  开源库来源
+### 已知限制
+ML仅对比历史基线，历史本身超标时ML会判定为常态，风险以固定阈值为准；仅支持zone-w、zone-n、zone-s三个区域。
+
+### 开源库
 Three.js、mqtt.js、Chart.js、pandas
 
-## 前置项目
-前置R18项目仓库：https://github.com/sunxiubing/nova-dormmate-final-2026
+### 前置项目
+DormMate前置仓库：https://github.com/sunxiubing/nova-dormmate-final-2026

@@ -417,36 +417,26 @@ html, body {
 }
 
 /* ==========================================================================
-   顶部居中叠放：优先关注横幅 + 全局告警横幅
+   左上角叠放：优先关注横幅 + 全局告警横幅
    --------------------------------------------------------------------------
    两条横幅都按内容高度自适应，所以纵向排成一列而不是各自绝对定位——
    否则宽度一变就会互相压住。整列不吃指针事件，画布拖拽照常。
+   靠左而不是居中：居中时会压在沙盘楼宇上，左列从标题栏下方直落到图例上方，
+   是画布上唯一稳定的空白带（宽度取到楼宇左缘，再宽就要压住宿舍区那栋）。
    ======================================================================== */
 
 .top-stack {
   position: absolute;
   top: 78px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 18px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 10px;
-  max-width: min(880px, calc(100vw - 460px));
+  width: min(420px, calc(100vw - 36px));
   pointer-events: none;      /* 只有横幅本身接收事件 */
 }
 
 .top-stack > * { pointer-events: auto; max-width: 100%; }
-
-/* 列内不再各自绝对定位；bannerIn 的 translateX(-50%) 也随之失效，
-   这里换成只做 Y 方向入场的同款动画 */
-.top-stack .alert-banner {
-  position: static;
-  top: auto;
-  left: auto;
-  transform: none;
-  animation: bannerInStack 0.35s ease-out, bannerPulse 2.1s ease-in-out 0.35s infinite;
-}
 
 @keyframes bannerInStack {
   from { opacity: 0; transform: translateY(-8px); }
@@ -544,21 +534,16 @@ html, body {
    ======================================================================== */
 
 .alert-banner {
-  position: absolute;
-  top: 78px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: flex-start;
   gap: 11px;
-  max-width: min(880px, calc(100vw - 460px));
   padding: 10px 18px 11px 15px;
   background: linear-gradient(180deg, #fff6f6, #ffffff);
   border: 1px solid rgba(211, 47, 47, 0.3);
   border-left: 4px solid #d32f2f;
   border-radius: var(--radius);
   box-shadow: var(--shadow), 0 0 24px -10px rgba(211, 47, 47, 0.5);
-  animation: bannerIn 0.35s ease-out, bannerPulse 2.1s ease-in-out 0.35s infinite;
+  animation: bannerInStack 0.35s ease-out, bannerPulse 2.1s ease-in-out 0.35s infinite;
 }
 .alert-banner[hidden] { display: none; }
 
@@ -600,10 +585,6 @@ html, body {
   --chip-ink: #0b6b36; --chip-bg: rgba(18, 161, 80, 0.12); --chip-line: rgba(18, 161, 80, 0.3);
 }
 
-@keyframes bannerIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
 @keyframes bannerPulse {
   0%, 100% { box-shadow: var(--shadow), 0 0 22px -12px rgba(211, 47, 47, 0.55); }
   50%      { box-shadow: var(--shadow), 0 0 34px -6px rgba(211, 47, 47, 0.75); }
@@ -1147,8 +1128,8 @@ html, body {
   .data-panel { width: 372px; }
   .legend { width: 208px; }
   .brand-text h1 { font-size: 14.5px; }
-  .alert-banner { max-width: calc(100vw - 40px); }
-  .top-stack { max-width: calc(100vw - 40px); }
+  /* 楼宇随画布一起缩，左列也跟着收窄，免得压住宿舍区那栋 */
+  .top-stack { width: 366px; }
   .hint { display: none; }
 }
 
