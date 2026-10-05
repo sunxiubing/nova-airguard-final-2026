@@ -8,7 +8,7 @@
  *   页面启动时所有指标为空，只有收到 MQTTX / python 端推送的报文才渲染。
  *
  * 报文约定
- *   主题： Airguard/+/data          （+ 为区域通配符，例如 Airguard/zone-n/data）
+ *   主题： Airguard-x9k2m/+/data          （+ 为区域通配符，例如 Airguard-x9k2m/zone-n/data）
  *   载荷： { zoneid, pm25, co2, crowdLevel, status, time }
  *     zoneid      区域编号（zone-n / zone-s / zone-w），与主题区域做双重校验
  *     pm25        PM2.5 浓度，单位 μg/m³
@@ -33,13 +33,13 @@
   var CONFIG = {
     /* ---- MQTT 接入配置（改这里即可切换 Broker / 主题）---- */
     mqtt: {
-      url: 'ws://127.0.0.1:8085',        // Broker 的 WebSocket 监听地址
-      topic: 'Airguard/+/data',          // + 通配符：一次订阅全部区域的 data 主题
-      /* 干预动作的广播主题。与 Airguard/+/data 不冲突：
-         'Airguard/+/data' 的第二层是 '+'、第三层必须是 data，
-         而干预报文是 'Airguard/intervention/<zoneId>'，第三层是区域号。 */
-      interventionTopic: 'Airguard/intervention/+',
-      interventionPrefix: 'Airguard/intervention/',
+      url: 'wss://broker.emqx.io:8084/mqtt',        // 公网 Broker（EMQX）的 WSS 地址
+      topic: 'Airguard-x9k2m/+/data',          // + 通配符：一次订阅全部区域的 data 主题
+      /* 干预动作的广播主题。与 Airguard-x9k2m/+/data 不冲突：
+         'Airguard-x9k2m/+/data' 的第二层是 '+'、第三层必须是 data，
+         而干预报文是 'Airguard-x9k2m/intervention/<zoneId>'，第三层是区域号。 */
+      interventionTopic: 'Airguard-x9k2m/intervention/+',
+      interventionPrefix: 'Airguard-x9k2m/intervention/',
       qos: 0,
       options: {
         clientId: 'airguard-web-' + Math.random().toString(16).slice(2, 8),
@@ -903,7 +903,7 @@
     return null;
   }
 
-  /* 从主题里识别区域：Airguard/zone-n/data → zone-n */
+  /* 从主题里识别区域：Airguard-x9k2m/zone-n/data → zone-n */
   function zoneFromTopic(topic) {
     var parts = String(topic).split('/');
     for (var i = 0; i < parts.length; i++) {
@@ -1037,7 +1037,7 @@
      *     返回 { zoneId, verified } 或 { error, detail }
      *     任一路写了「不是已知区域」的值、或两路互相矛盾，整条报文一律拒收；
      *     主题认不出区域时绝不回退到报文 zoneid —— 那正是串区报文的典型形态
-     *     （主题 Airguard/zone-m/data + 报文 zoneId=zone-w）。
+     *     （主题 Airguard-x9k2m/zone-m/data + 报文 zoneId=zone-w）。
      *     四端同一口径：web / 手机端 / 小程序 / 3D 沙盘。
      * ----------------------------------------------------------------- */
     function resolveZone(topic, payload) {
@@ -1146,7 +1146,7 @@
     /* -------------------------------------------------------------------
      * 4.2 干预动作广播
      *     没有后端服务，四端的状态一致靠「各自跑同一套状态机 + 干预动作广播」达成：
-     *     任何一端提交干预，都往 Airguard/intervention/<zoneId> 发一条（retain，
+     *     任何一端提交干预，都往 Airguard-x9k2m/intervention/<zoneId> 发一条（retain，
      *     这样后打开的一端也能收到当前事件的处理状态）。
      *     收端只在 event_id 与本端当前事件吻合、且状态还是 OPEN 时才应用，
      *     所以自己发出去的那条回声、以及重复到达的同一条，都是幂等的。
@@ -1255,7 +1255,11 @@
              'alertBody', 'alertCount', 'alertEmpty', 'clockTime', 'connText', 'connBar',
              'msgCount', 'rejectCount', 'statusMismatch', 'linkNote', 'topbar', 'brokerUrl',
              'priorityFocus', 'priorityScoreBody', 'priorityEmpty', 'priorityPanel',
-             'eventGrid', 'eventEmpty'];
+             'eventGrid', 'eventEmpty',
+             /* E2：语音 / 现场 / 朗读 */
+             'micBtn', 'photoBtn', 'speakBtn', 'e2Status', 'cmdInput', 'photoGrid', 'photoEmpty', 'photoCount',
+             'camOverlay', 'camVideo', 'camCanvas', 'camBind', 'camShoot', 'camPick', 'camCancel',
+             'camFile', 'camNote'];
 
   function cacheEls() { IDS.forEach(function (id) { el[id] = $(id); }); }
 
@@ -1344,9 +1348,12 @@
       // 刷新后从本地存储回灌的读数：正常渲染，但打标记并降低饱和度，
       // 免得把几小时前的旧值当成实时数据看
       var isCached = !idle && !!d.cached;
+      // E2：语音指令选中的区域（与「优先关注」无关，两者可以同时出现）
+      var isVoice = E2.voiceTarget === z.id;
 
       html += '<article class="zone-card' + (idle ? ' is-idle' : '') + (isFocus ? ' is-focus' : '') +
-              (isCached ? ' is-cached' : '') + '"' +
+              (isCached ? ' is-cached' : '') + (isVoice ? ' is-voice' : '') + '"' +
+              ' data-zone="' + esc(z.id) + '"' +
               ' style="--zone-color:' + z.color + ';--focus-color:' + lv.hex + '"' +
               ' aria-label="' + esc(z.name) + ' 监测数据">';
 
@@ -1369,6 +1376,7 @@
       var flag = idle ? '等待该区域上报数据'
                : (triggerText(d) || '各项指标在阈值内');
       html += '<p class="zone-flag">' +
+                (isVoice ? '<span class="voice-pill">语音选中</span>' : '') +
                 (isFocus ? '<span class="focus-pill">重点告警区域</span>' : '') +
                 (isCached ? '<span class="cached-pill" title="刷新前保存在本地的读数，' +
                             '等待 MQTT 推送新数据">本地缓存</span>' : '') +
@@ -2048,6 +2056,480 @@
         Mqtt.publishIntervention(ev, actions);
       });
     }
+
+    /* ---- E2：语音 / 记录现场 / 朗读结论 ---- */
+    if (el.micBtn) el.micBtn.addEventListener('click', toggleListening);
+    if (el.photoBtn) el.photoBtn.addEventListener('click', openCamera);
+    if (el.speakBtn) el.speakBtn.addEventListener('click', function () { speakConclusion(null); });
+
+    if (el.cmdInput) {
+      /* 文字指令与语音指令走同一条解析路径：语音不可用时（比如浏览器不支持
+         语音识别、或机器连不上识别服务）功能仍然完整可演示 */
+      el.cmdInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        var text = el.cmdInput.value.trim();
+        if (!text) return;
+        el.cmdInput.value = '';
+        runCommand(text, 'text');
+      });
+      el.cmdInput.addEventListener('click', function (e) { e.stopPropagation(); });
+    }
+
+    if (el.camShoot) el.camShoot.addEventListener('click', shootPhoto);
+    if (el.camCancel) el.camCancel.addEventListener('click', closeCamera);
+    if (el.camPick) {
+      el.camPick.addEventListener('click', function () { el.camFile.click(); });
+    }
+    if (el.camFile) {
+      el.camFile.addEventListener('change', function () {
+        var file = el.camFile.files && el.camFile.files[0];
+        el.camFile.value = '';
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          addPhoto(String(reader.result), E2.camZoneId);
+          e2Toast('已记录现场照片（' + zoneLabel(E2.camZoneId) + '）');
+          closeCamera();
+        };
+        reader.onerror = function () { setStatus('这张图片读不出来，换一张试试', true); };
+        reader.readAsDataURL(file);
+      });
+    }
+    if (el.camOverlay) {
+      /* 点遮罩空白处关闭；点浮层内容不关 */
+      el.camOverlay.addEventListener('click', function (e) {
+        if (e.target === el.camOverlay) closeCamera();
+      });
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && el.camOverlay && !el.camOverlay.hidden) closeCamera();
+    });
+  }
+
+  /* ===========================================================================
+   * 6.6 E2：语音指令（ASR）/ 记录现场（拍照）/ 朗读结论（TTS）
+   *
+   *   三条语音指令：
+   *     查看宿舍区zone-n / 查看教学区zone-s / 查看食堂区zone-w → 高亮该区域卡片
+   *     记录现场                                              → 拍一张现场照片
+   *     朗读结论                                              → 播报该区域实时状态
+   *
+   *   照片与语音全部只活在内存里：本页不落盘、不上传、不发往公网，刷新即清空（与全项目一致）。
+   *   语音文字与文字输入框走同一条指令解析：解析器是纯函数，控制台可直接调。
+   * ======================================================================== */
+
+  var E2 = {
+    voiceTarget: null,   // 语音/文字指令选中的区域，null = 还没选
+    photos: [],          // 现场照片，最新在前
+    camZoneId: null,     // 本次拍照绑定的区域
+    stream: null,        // getUserMedia 的媒体流，关浮层时必须停掉
+    rec: null,           // SpeechRecognition 实例
+    listening: false,
+    PHOTO_MAX: 24        // 内存里最多留 24 张，超出丢最旧的
+  };
+
+  var photoSeq = 0;
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+  /* 指令里的区域说法：中文名、区域编号，以及语音识别常把 zone-n 听成的 zonen */
+  var E2_ZONE_WORDS = [
+    { id: 'zone-n', words: ['宿舍区', '宿舍', 'zone-n', 'zonen'] },
+    { id: 'zone-s', words: ['教学区', '教学楼', 'zone-s', 'zones'] },
+    { id: 'zone-w', words: ['食堂区', '食堂', 'zone-w', 'zonew'] }
+  ];
+
+  /* ---------------------------------------------------------------------------
+   * 指令解析（纯函数）：返回 { action, zoneId }
+   *   action：view（查看区域）/ photo（记录现场）/ speak（朗读结论）/ unknown
+   * 先认区域、再认动作：这样「朗读食堂区的结论」也能带上区域。
+   * ------------------------------------------------------------------------ */
+  function parseCommand(text) {
+    var t = String(text == null ? '' : text)
+              .toLowerCase()
+              .replace(/[\s,，。.、！!？?]/g, '');
+
+    var zoneId = null;
+    for (var i = 0; i < E2_ZONE_WORDS.length && !zoneId; i++) {
+      for (var j = 0; j < E2_ZONE_WORDS[i].words.length; j++) {
+        if (t.indexOf(E2_ZONE_WORDS[i].words[j]) >= 0) {
+          zoneId = E2_ZONE_WORDS[i].id;
+          break;
+        }
+      }
+    }
+
+    /* 认动作前先把区域词剔掉：「记录食堂区现场」里的区域名会把「记录现场」切开 */
+    var rest = t;
+    for (var m = 0; m < E2_ZONE_WORDS.length; m++) {
+      for (var n = 0; n < E2_ZONE_WORDS[m].words.length; n++) {
+        rest = rest.split(E2_ZONE_WORDS[m].words[n]).join('');
+      }
+    }
+
+    var action = 'unknown';
+    if (/记录现场|拍照|拍摄|拍张|拍一张|照片|留证|录像/.test(rest)) action = 'photo';
+    else if (/朗读|播报|读一下|念一下|结论/.test(rest)) action = 'speak';
+    else if (zoneId) action = 'view';
+    else if (/查看|查一下|看|切换|定位|聚焦/.test(rest)) action = 'view';
+
+    return { action: action, zoneId: zoneId };
+  }
+
+  function zoneLabel(zoneId) {
+    var z = findZone(zoneId);
+    return z ? z.name + z.id : String(zoneId || '');
+  }
+
+  /* 指令没点名区域时用哪个区域：优先「持续风险与优先关注」算出来的那个，
+     再退到重点关注区域；都没有（三区全正常）就让调用方提示先选区域。 */
+  function resolveZoneId() {
+    if (E2.voiceTarget) return E2.voiceTarget;
+    var p = Store.state.priority;
+    if (p && p.winner && p.winner.zoneId) return p.winner.zoneId;
+    return Store.state.focusZoneId || null;
+  }
+
+  /* 该区域当前绑定的告警事件：优先 D3 事件，其次事件列表里该区域最近一条 */
+  function currentEventOf(zoneId) {
+    var ev = Store.state.activeEvents[zoneId];
+    if (ev) {
+      return {
+        id: ev.event_id,
+        type: ev.type,
+        state: ev.state,
+        text: ev.type + ' · ' + (EV_LABEL[ev.state] || ev.state)
+      };
+    }
+    var alerts = Store.state.alerts;
+    for (var i = 0; i < alerts.length; i++) {
+      if (alerts[i].zoneId === zoneId) {
+        return {
+          id: alerts[i].id,
+          type: alerts[i].type,
+          state: null,
+          text: alerts[i].type + ' · ' + alerts[i].timeShort + ' 状态流水'
+        };
+      }
+    }
+    return null;   // 该区域还没出过任何事件
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 反馈：状态行 + 底部提示条 + 可选朗读
+   * ------------------------------------------------------------------------ */
+  function setStatus(text, isError) {
+    if (!el.e2Status) return;
+    el.e2Status.textContent = text;
+    el.e2Status.style.color = isError ? 'var(--status-critical)' : '';
+  }
+
+  var toastEl = null;
+  var toastTimer = null;
+
+  function e2Toast(text) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'e2-toast';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = text;
+    toastEl.classList.add('is-on');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('is-on'); }, 3200);
+  }
+
+  function pickZhVoice() {
+    if (!window.speechSynthesis) return null;
+    var voices = window.speechSynthesis.getVoices() || [];
+    for (var i = 0; i < voices.length; i++) {
+      if (/^zh/i.test(voices[i].lang)) return voices[i];
+    }
+    return null;
+  }
+
+  function e2Speak(text) {
+    if (!window.speechSynthesis) {
+      setStatus('当前浏览器不支持语音播报（TTS）', true);
+      return;
+    }
+    try {
+      window.speechSynthesis.cancel();     // 连点两次时不要两条声音叠着念
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'zh-CN';
+      u.rate = 1;
+      u.pitch = 1;
+      var v = pickZhVoice();
+      if (v) u.voice = v;
+      window.speechSynthesis.speak(u);
+    } catch (err) {
+      console.warn('[AirGuard] TTS 失败：', err);
+      setStatus('语音播报失败：' + err.message, true);
+    }
+  }
+
+  /* ---------------------------------------------------------------------------
+   * ① 查看某区域：高亮区域卡片
+   * ------------------------------------------------------------------------ */
+  function highlightZone(zoneId) {
+    E2.voiceTarget = zoneId;
+    renderZones(Store.state);     // 卡片是整块重建的，滚之前要重新取节点
+    var card = el.zoneGrid && el.zoneGrid.querySelector('[data-zone="' + zoneId + '"]');
+    if (card && card.scrollIntoView) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  /* ---------------------------------------------------------------------------
+   * ② 朗读结论：感知维度（crowdLevel）+ 环境维度
+   *    crowdLevel 来自 MQTT 报文（simulated 数据），环境等级复用读数里已算好的判定
+   * ------------------------------------------------------------------------ */
+  function crowdPhrase(code) {
+    if (code >= 3) return '严重拥挤，疑似早午晚饭用餐高峰';
+    if (code === 2) return '拥挤，疑似课间人流高峰';
+    if (code === 1) return '人流正常，环境平稳';
+    return '人流稀疏，环境正常';
+  }
+
+  function envPhrase(d) {
+    var label = zoneLabel(d.zoneId);
+    if (d.level === 'critical') return label + '的PM2.5 ' + d.pm25 + '，大于150，重度污染';
+    if (d.level === 'warning') return label + '的PM2.5 ' + d.pm25 + '，大于75，轻度污染';
+    if (d.level === 'serious') return label + '的CO2 ' + d.co2 + '，大于等于1500，通风不足风险';
+    return label + '正常';
+  }
+
+  function conclusionText(zoneId) {
+    var d = Store.state.zones[zoneId];
+    if (!d) return zoneLabel(zoneId) + '暂时没有数据，请等待 MQTT 推送。';
+    return zoneLabel(zoneId) + '。感知维度：' + crowdPhrase(d.crowdLevel) +
+           '。环境维度：' + envPhrase(d) + '。';
+  }
+
+  function speakConclusion(zoneId) {
+    var id = zoneId || resolveZoneId();
+    if (!id) {
+      setStatus('还没有任何区域数据：先语音说「查看食堂区zone-w」，或等 MQTT 推送', true);
+      return;
+    }
+    var text = conclusionText(id);
+    setStatus('朗读结论 · ' + text);
+    e2Toast('🔊 ' + text);
+    e2Speak(text);
+  }
+
+  /* ---------------------------------------------------------------------------
+   * ③ 记录现场：拍照并绑定 区域 / 时间 / 当前告警事件
+   * ------------------------------------------------------------------------ */
+  function openCamera() {
+    var id = resolveZoneId();
+    if (!id) {
+      setStatus('还不知道要记录哪个区域：先语音说「查看食堂区zone-w」，或等 MQTT 推送', true);
+      return;
+    }
+    E2.camZoneId = id;
+
+    var ev = currentEventOf(id);
+    el.camBind.innerHTML = '绑定区域 <b>' + esc(zoneLabel(id)) + '</b>' +
+      (ev ? ' · 告警事件 <b>' + esc(ev.text) + '</b>' : ' · 该区域暂无告警事件');
+    el.camNote.textContent = '';
+    el.camOverlay.hidden = false;
+    startStream();
+  }
+
+  function startStream() {
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) {
+      el.camNote.textContent = '这个浏览器/打开方式拿不到摄像头，改用【改用本地图片】选一张现场照片。';
+      return;
+    }
+    md.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false })
+      .then(function (stream) {
+        E2.stream = stream;
+        el.camVideo.srcObject = stream;
+        el.camNote.textContent = '点【拍照】留证；照片只存在本页内存里。';
+      })
+      .catch(function (err) {
+        var hint = err && err.name === 'NotAllowedError'
+          ? '摄像头权限被拒绝。'
+          : '摄像头打不开（' + (err && err.name ? err.name : '未知错误') + '）。';
+        el.camNote.textContent = hint + '可以用【改用本地图片】选一张现场照片；' +
+          '用 http://127.0.0.1 打开本页通常能正常调用摄像头。';
+      });
+  }
+
+  function closeCamera() {
+    if (E2.stream) {
+      var tracks = E2.stream.getTracks ? E2.stream.getTracks() : [];
+      for (var i = 0; i < tracks.length; i++) tracks[i].stop();   // 不关流摄像头指示灯会一直亮
+      E2.stream = null;
+    }
+    if (el.camVideo) el.camVideo.srcObject = null;
+    if (el.camOverlay) el.camOverlay.hidden = true;
+  }
+
+  function shootPhoto() {
+    var v = el.camVideo, c = el.camCanvas;
+    if (!v || !v.videoWidth) {
+      el.camNote.textContent = '摄像头画面还没就绪，稍等一下再点【拍照】。';
+      return;
+    }
+    var w = 640;
+    var h = Math.max(1, Math.round(v.videoHeight * w / v.videoWidth));
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').drawImage(v, 0, 0, w, h);
+
+    var zoneId = E2.camZoneId;
+    addPhoto(c.toDataURL('image/jpeg', 0.8), zoneId);
+    closeCamera();
+    e2Toast('已记录现场照片（' + zoneLabel(zoneId) + '）');
+  }
+
+  /* 存一条照片记录：zone + 时间 + 当前告警事件 + 拍照那一刻的读数 */
+  function addPhoto(dataUrl, zoneId) {
+    var z = findZone(zoneId);
+    var d = Store.state.zones[zoneId] || null;
+    var now = Date.now();
+
+    var photo = {
+      id: 'photo-' + (++photoSeq),
+      zoneId: zoneId,
+      zoneName: z ? z.name : zoneId,
+      zoneColor: z ? z.color : '#898781',
+      at: fmtStampFull(now),
+      timeShort: fmtTime(now),
+      dataUrl: dataUrl,
+      reading: d ? {
+        pm25: d.pm25,
+        co2: d.co2,
+        crowdLevel: d.crowdLevel,
+        levelLabel: d.levelInfo.label
+      } : null,
+      event: currentEventOf(zoneId)
+    };
+    E2.photos.unshift(photo);
+
+    if (E2.photos.length > E2.PHOTO_MAX) E2.photos.length = E2.PHOTO_MAX;
+    renderPhotos();
+    return photo;
+  }
+
+  function renderPhotos() {
+    if (!el.photoGrid) return;
+
+    el.photoGrid.innerHTML = E2.photos.map(function (p) {
+      var evLine = p.event ? esc(p.event.text) : '无告警事件';
+      var r = p.reading;
+      var readLine = r
+        ? 'pm25 ' + r.pm25 + ' / co2 ' + r.co2 + ' / 人流 Lv.' + r.crowdLevel +
+          crowdInfo(r.crowdLevel).label + ' / ' + r.levelLabel
+        : '拍照时该区域暂无读数';
+      var file = '现场_' + p.zoneId + '_' + p.at.replace(/[-: ]/g, '') + '.jpg';
+
+      return '<figure class="photo-card">' +
+               '<img src="' + p.dataUrl + '" alt="' + esc(p.zoneName + p.zoneId + ' 现场照片') + '" />' +
+               '<figcaption class="photo-meta">' +
+                 '<p class="photo-zone">' +
+                   '<span class="zone-dot" style="background:' + p.zoneColor + '" aria-hidden="true"></span>' +
+                   esc(p.zoneName) + '<span class="zone-code">' + esc(p.zoneId) + '</span>' +
+                 '</p>' +
+                 '<p class="photo-line">时间 <b>' + esc(p.at) + '</b></p>' +
+                 '<p class="photo-line">事件 <b>' + evLine + '</b></p>' +
+                 '<p class="photo-line">读数 <b>' + esc(readLine) + '</b></p>' +
+                 '<a class="photo-dl" href="' + p.dataUrl + '" download="' + esc(file) + '">下载照片</a>' +
+               '</figcaption>' +
+             '</figure>';
+    }).join('');
+
+    el.photoEmpty.hidden = E2.photos.length > 0;
+    if (el.photoCount) {
+      el.photoCount.textContent = E2.photos.length
+        ? '共 ' + E2.photos.length + ' 张 · 上限 ' + E2.PHOTO_MAX + ' 张（只存内存，刷新即清）'
+        : '暂无照片';
+    }
+  }
+
+  /* ---------------------------------------------------------------------------
+   * ④ 语音识别：三条指令的入口
+   * ------------------------------------------------------------------------ */
+  function toggleListening() {
+    if (!SpeechRec) {
+      setStatus('这个浏览器不支持语音识别（Chrome / Edge 支持）。' +
+                '可以在右边输入框里打字下达同样的指令。', true);
+      return;
+    }
+    if (E2.listening && E2.rec) {
+      E2.rec.stop();       // 再点一次 = 提前收工
+      return;
+    }
+
+    var rec = new SpeechRec();
+    E2.rec = rec;
+    rec.lang = 'zh-CN';
+    rec.interimResults = false;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+
+    rec.onstart = function () {
+      E2.listening = true;
+      el.micBtn.classList.add('is-listening');
+      el.micBtn.innerHTML = '<span class="e2-ico" aria-hidden="true">🛑</span>停止收音';
+      setStatus('正在收音…可说：查看宿舍区zone-n / 查看教学区zone-s / 查看食堂区zone-w / 记录现场 / 朗读结论');
+    };
+
+    rec.onresult = function (e) {
+      var text = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) text += e.results[i][0].transcript;
+      }
+      if (text) runCommand(text, 'voice');
+    };
+
+    rec.onerror = function (e) {
+      var tips = {
+        'not-allowed': '麦克风被拒绝：点地址栏的锁图标允许麦克风后重试',
+        'service-not-allowed': '浏览器拒绝了语音识别服务。用 http://127.0.0.1 打开本页可解决；' +
+                               '也可以直接在右边输入框打字',
+        'no-speech': '没听到声音，再说一次',
+        'audio-capture': '没找到麦克风设备',
+        'network': '语音识别服务连不上（需要联网）。可以在右边输入框打字下达同样的指令'
+      };
+      setStatus(tips[e.error] || ('语音识别失败：' + e.error), true);
+    };
+
+    rec.onend = function () {
+      E2.listening = false;
+      el.micBtn.classList.remove('is-listening');
+      el.micBtn.innerHTML = '<span class="e2-ico" aria-hidden="true">🎤</span>语音指令';
+    };
+
+    try {
+      rec.start();
+    } catch (err) {
+      setStatus('语音识别启动失败：' + err.message, true);
+    }
+  }
+
+  /* 指令总入口：语音识别结果与文字输入框都走这里 */
+  function runCommand(text, source) {
+    var cmd = parseCommand(text);
+    var who = source === 'voice' ? '语音「' : '指令「';
+    if (cmd.zoneId) E2.voiceTarget = cmd.zoneId;   // 指令里点了名就记下来
+
+    if (cmd.action === 'view' && cmd.zoneId) {
+      highlightZone(cmd.zoneId);
+      setStatus(who + text + '」→ 已高亮 ' + zoneLabel(cmd.zoneId));
+      e2Speak('已查看' + zoneLabel(cmd.zoneId));
+    } else if (cmd.action === 'photo') {
+      setStatus(who + text + '」→ 记录现场');
+      openCamera();
+    } else if (cmd.action === 'speak') {
+      setStatus(who + text + '」→ 朗读结论');
+      speakConclusion(cmd.zoneId);
+    } else {
+      setStatus(who + text + '」没听懂：可说 查看宿舍区zone-n / 记录现场 / 朗读结论', true);
+    }
+    return cmd;
   }
 
   /* ===========================================================================
@@ -2061,6 +2543,14 @@
 
     chart = initChart();
     Store.subscribe(render);
+
+    /* E2：现场记录的空态；麦克风按钮在浏览器不支持语音识别时禁用并说明原因 */
+    renderPhotos();
+    if (el.micBtn && !SpeechRec) {
+      el.micBtn.disabled = true;
+      el.micBtn.title = '这个浏览器不支持语音识别（Chrome / Edge 支持）；' +
+                        '可用右边的输入框打字下达同样的指令';
+    }
 
     /* 不做任何恢复：区域卡片、趋势曲线、事件列表、D3 状态机全部只活在内存里，
        刷新即回到「等第一条报文」，由本次会话新收到的数据重新建立
@@ -2121,6 +2611,24 @@
         /* 模拟从别端广播来的干预，供跨端一致性测试用 */
         receive: function (msg) { return Store.receiveIntervention(msg); },
         connected: Mqtt.isConnected
+      },
+      /* ---- E2：语音指令 / 记录现场 / 朗读结论 ----
+         只存内存，不落盘、不上传；指令解析是纯函数，方便控制台直接验 */
+      e2: {
+        commands: ['查看宿舍区zone-n', '查看教学区zone-s', '查看食堂区zone-w', '记录现场', '朗读结论'],
+        parseCommand: parseCommand,
+        run: runCommand,                       // 等价于说一句指令
+        speak: speakConclusion,                // 朗读结论
+        highlight: highlightZone,              // 查看某区域（高亮卡片）
+        openCamera: openCamera,
+        shoot: shootPhoto,                     // 直接拍一张（摄像头已就绪时）
+        closeCamera: closeCamera,
+        conclusionText: conclusionText,        // 该区域的播报稿
+        speechSupported: !!SpeechRec,
+        ttsSupported: !!window.speechSynthesis,
+        photos: E2.photos,                     // 同一个引用，不复制
+        photoMax: E2.PHOTO_MAX,
+        voiceTarget: function () { return E2.voiceTarget; }
       },
       /* 事件列表（状态流水，只存内存）：供联调与自动化测试使用 */
       alerts: {

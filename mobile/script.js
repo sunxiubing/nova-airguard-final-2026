@@ -6,7 +6,7 @@
        感知采集节点 → MQTT/JSON → 共享实时状态 → Web 监测大屏
                                                 → 移动巡检端（本文件）
                                                 → 地图 / 3D
-   与 Web 大屏订阅同一条数据流： Airguard/+/data
+   与 Web 大屏订阅同一条数据流： Airguard-x9k2m/+/data
    ------------------------------------------------------------
    设计要点：
    1. 页面不写死任何示例数据，启动时卡片为空，全部依赖 MQTT 推送；
@@ -23,13 +23,16 @@
      ============================================================ */
 
   var CONFIG = {
+    /* 公网 Broker：手机在任何网络（4G / 别的 WiFi）都能连，
+       不再要求与电脑在同一局域网 */
     mqtt: {
-      url: 'ws://127.0.0.1:8085',        // 与 Web 大屏共用同一个 Broker
-      topic: 'Airguard/+/data',          // + 为区域通配符
-      /* D3 干预广播：Airguard/+/data 只匹配「第三段是 data」的主题，
-         Airguard/intervention/zone-n 的第三段是区域名，两者不会互相误收 */
-      interventionTopic: 'Airguard/intervention/+',
-      interventionPrefix: 'Airguard/intervention/',
+      url: 'wss://broker.emqx.io:8084/mqtt',        // 与 Web 大屏共用同一个 Broker 
+        
+      topic: 'Airguard-x9k2m/+/data',          // + 为区域通配符
+      /* D3 干预广播：Airguard-x9k2m/+/data 只匹配「第三段是 data」的主题，
+         Airguard-x9k2m/intervention/zone-n 的第三段是区域名，两者不会互相误收 */
+      interventionTopic: 'Airguard-x9k2m/intervention/+',
+      interventionPrefix: 'Airguard-x9k2m/intervention/',
       qos: 0,
       options: {
         clientId: 'airguard-mobile-' + Math.random().toString(16).slice(2, 10),
@@ -164,7 +167,7 @@
     return ZONE_ALIAS[key] || ZONE_ALIAS[key.replace(/^airguard\//, '')] || null;
   }
 
-  /* 从主题里取区域段：Airguard/zone-n/data → zone-n */
+  /* 从主题里取区域段：Airguard-x9k2m/zone-n/data → zone-n */
   function zoneFromTopic(topic) {
     var seg = String(topic || '').split('/');
     for (var i = 0; i < seg.length; i++) {
@@ -177,7 +180,7 @@
   /* 双通道区域校验：主题段与报文 zoneId 必须指向同一区域。
      任一路写了无法识别的区域、或两路互相矛盾，整条报文一律拒收；
      主题认不出区域时绝不回退到报文 zoneId —— 那正是串区报文的典型形态
-     （主题 Airguard/zone-m/data + 报文 zoneId=zone-w）。
+     （主题 Airguard-x9k2m/zone-m/data + 报文 zoneId=zone-w）。
      四端同一口径：web / 手机端 / 小程序 / 3D 沙盘。 */
   function resolveZone(topic, payload) {
     var fromTopic = zoneFromTopic(topic);
@@ -1499,7 +1502,7 @@
       client.on('message', function (topic, payload) {
         var text = payload.toString();
         // 干预广播与报文流走同一条连接，靠主题前缀分流 ——
-        // Airguard/intervention/zone-n 的第 3 段是区域名，不会被 Airguard/+/data 收到
+        // Airguard-x9k2m/intervention/zone-n 的第 3 段是区域名，不会被 Airguard-x9k2m/+/data 收到
         if (String(topic).indexOf(CONFIG.mqtt.interventionPrefix) === 0) {
           Mqtt.onIntervention(text);
           return;

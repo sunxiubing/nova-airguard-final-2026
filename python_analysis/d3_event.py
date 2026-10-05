@@ -8,7 +8,7 @@ AirGuard D3 —— 【干预—验证—恢复】事件状态机（报告端实�
 报告端要能把整条事件链画出来：
 
     ① 收到异常 MQTT 数据 → 该区域标为「优先关注」，事件建立（OPEN 待处理）
-    ② 用户在 Web / 移动端 / 3D 里选择干预动作 → 广播 Airguard/intervention/<区域>
+    ② 用户在 Web / 移动端 / 3D 里选择干预动作 → 广播 Airguard-x9k2m/intervention/<区域>
     ③ 各端（含本报告）收到广播 → 事件转 HANDLING 处理中
     ④ 继续收后续 MQTT 数据 → 实时重新分析
     ⑤ 按新数据自动判定 → 仍需关注 / 已恢复（干预后连续恶化还会回退 OPEN）
@@ -75,7 +75,7 @@ EV_LABEL = {
 ZONE_NAME = {"zone-n": "宿舍区", "zone-s": "教学区", "zone-w": "食堂区"}
 CSV_NOTE = "CSV 历史行"
 
-INTERVENTION_TOPIC = "Airguard/intervention/{zone}"
+INTERVENTION_TOPIC = "Airguard-x9k2m/intervention/{zone}"
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +167,7 @@ class D3Engine:
         self.interventions = 0        # 收到的干预广播条数
         self.history_rows = 0         # 其中来自 CSV 历史行
         self.live_rows = 0            # 其中来自实时 MQTT
+        self.skipped = 0             # 脏行/脏报文，解析失败被跳过
         self._seen: list = []
         self._seen_set: set = set()
         self._seq = 0
@@ -194,7 +195,9 @@ class D3Engine:
 
         raw_time = payload.get("time", payload.get("ts", payload.get("timestamp")))
         dt = parse_time(raw_time)
-        ts = dt.timestamp() * 1000.0 if dt else recv_at.timestamp() * 1000.0
+        if not isinstance(recv_at, datetime):      # CSV 里的 NaT 也会走到这儿
+            recv_at = datetime.now()
+        ts = dt.timestamp() * 1000.0 if dt is not None else recv_at.timestamp() * 1000.0
         crowd = int(max(0, min(3, round(crowd))))
 
         conf = _to_num(payload.get("confidence", payload.get("conf")))
@@ -206,14 +209,17 @@ class D3Engine:
             "level": evaluate_level(pm25, co2),
             "ts": ts,
             "dt": dt,
-            "timeFull": (dt or recv_at).strftime("%Y-%m-%d %H:%M:%S"),
+            "timeFull": (dt if dt is not None else recv_at).strftime("%Y-%m-%d %H:%M:%S"),
+            # 时间是不是报文自己带的。CSV 的 time 写坏时只能退回收到时刻，
+            # 这种「不可信时间」不参与后面的陈旧广播判断
+            "timeTrusted": dt is not None,
             "lowConfidence": conf is not None and conf < EV_CONFIDENCE_FLOOR,
             "source": source,
         }
 
     def feed(self, topic: str, payload: dict, recv_at: datetime | None = None,
              source: str = "live") -> dict | None:
-        """topic 形如 Airguard/zone-n/data。返回本次生效的事件（或 None）。"""
+        """topic 形如 Airguard-x9k2m/zone-n/data。返回本次生效的事件（或 None）。"""
         recv_at = recv_at or datetime.now()
         if not isinstance(payload, dict):
             return None
@@ -275,12 +281,16 @@ class D3Engine:
             return ev
 
         # ---- HANDLING 处理中：只能由新监测数据判定，按钮到不了这里 ----
+        # ④ 每条干预后数据都单独记一行，⑤ 的结论另起一行 —— 报告里一步一步看得见
+        self._log(ev, reading,
+                  f'④ 收到干预后新数据：pm25 {reading["pm25"]} / co2 {reading["co2"]}')
+
         if reading["lowConfidence"]:
             if is_recovered_env(reading["level"], crowd):
                 ev["manualReview"] = True
                 ev["verifySamples"] = []
                 ev["outcome"] = "低可信度数据，已标记人工复核"
-            self._log(ev, reading, "低可信度数据，不参与恢复判定")
+            self._log(ev, reading, "⑤ 自动判定：数据低可信度，不参与恢复判定")
             return ev
 
         if is_recovered_env(reading["level"], crowd):
@@ -293,7 +303,7 @@ class D3Engine:
             ev["state"] = EV_RECOVERED
             ev["recoveredAt"] = reading["timeFull"]
             ev["outcome"] = "已恢复"
-            self._log(ev, reading, "收到正常监测数据，自动判定恢复")
+            self._log(ev, reading, "⑤ 自动判定：达标 → 已恢复")
             return ev
 
         # 不达标：严重度高于干预那一刻才算恶化
@@ -308,14 +318,16 @@ class D3Engine:
                 ev["priorityReason"] = build_reason(reading)
                 ev["actionKey"] = action_key_of(reading["level"], crowd)
                 ev["actionOptions"] = EV_ACTIONS.get(ev["actionKey"], [])
-                self._log(ev, reading, f"连续 {EV_RELAPSE_SAMPLES} 组数据恶化，回退 OPEN")
+                self._log(ev, reading,
+                          f"⑤ 自动判定：连续 {EV_RELAPSE_SAMPLES} 组恶化 → 回退 OPEN")
             else:
                 ev["outcome"] = "仍需关注"
-                self._log(ev, reading, f"数据恶化 {ev['relapseSamples']}/{EV_RELAPSE_SAMPLES}")
+                self._log(ev, reading,
+                          f"⑤ 自动判定：数据恶化 {ev['relapseSamples']}/{EV_RELAPSE_SAMPLES}，仍需关注")
         else:
             ev["relapseSamples"] = 0
             ev["outcome"] = "仍需关注"
-            self._log(ev, reading, "数据未达标，继续观察")
+            self._log(ev, reading, "⑤ 自动判定：未达标 → 仍需关注")
         return ev
 
     def _create(self, reading: dict) -> dict:
@@ -339,6 +351,9 @@ class D3Engine:
             "outcome": "待处理",
             "manualReview": False,
             "severity": severity_of(rank, crowd),
+            "startSeverity": severity_of(rank, crowd),   # 建事件那一条的严重度，步骤①显示它
+            "startTs": reading["ts"],                    # 建事件时刻，用于认领干预广播
+            "startTimeTrusted": reading.get("timeTrusted", True),
             "actionKey": key,
             "actionOptions": EV_ACTIONS.get(key, []),
             "startReading": {"pm25": reading["pm25"], "co2": reading["co2"],
@@ -393,16 +408,29 @@ class D3Engine:
         ev["relapseSamples"] = 0
         ev["manualReview"] = False
         ev["outcome"] = "干预已提交，等待新监测数据验证"
+        note = (f'③ 三端同步「处理中」：{actor} 提交并广播 '
+                f'{INTERVENTION_TOPIC.format(zone=zone_id)} · ' + " / ".join(clean))
+        if ev.pop("matchedBy", "") == "zone+state":
+            note += f'（广播事件号 {ev["remoteEventId"] or "—"} ↔ 本端 {ev["event_id"]}，按区域认领）'
         ev["log"].append({
             "time": ev["interventionAt"], "levelLabel": "", "crowdLevel": None,
-            "note": "管理员提交干预：" + " / ".join(clean),
+            "note": note,
         })
         if len(ev["log"]) > EV_LOG_MAX:
             del ev["log"][0]
         return ev
 
     def receive_intervention(self, msg: dict) -> dict | None:
-        """接收别端广播来的干预动作。event_id 对不上、或状态已不是 OPEN 就忽略。"""
+        """接收别端广播来的干预动作。
+
+        认领条件（两者满足其一）：event_id 与本端事件号完全一致；或者——区域对得上、
+        本端该区域事件还在 OPEN、且广播时刻不早于本端事件开始时间。
+
+        为什么要放宽 event_id：报告端的事件是拿 CSV 历史行预填出来的，事件号里的
+        自增段各端各算各的，跟 web / 移动端永远对不上。只认全等的话，真在 web 端点
+        一次干预，报告这边只会记一条「没生效」，后面的 ③④⑤ 永远空着。
+        放宽的只是「认领」，不放宽状态机：认领之后依旧只能由新监测数据判定恢复。
+        """
         if not isinstance(msg, dict):
             return None
         zone_id = str(msg.get("zoneId", msg.get("zoneid", msg.get("zone", "")))).strip().lower()
@@ -412,23 +440,43 @@ class D3Engine:
         ev = self.active.get(zone_id)
         if ev is None:
             return None
-        if ev["event_id"] == msg.get("event_id") and ev["state"] == EV_OPEN:
-            return self.intervene(zone_id, msg.get("actions"),
-                                  at=msg.get("at") or msg.get("time"),
+
+        at = msg.get("at") or msg.get("time") or ""
+        remote_id = str(msg.get("event_id") or "")
+        same_id = bool(ev["event_id"]) and ev["event_id"] == remote_id
+        fits = self._fits_event(ev, at)
+
+        if ev["state"] == EV_OPEN and (same_id or fits):
+            ev["matchedBy"] = "event_id" if same_id else "zone+state"
+            ev["remoteEventId"] = remote_id
+            return self.intervene(zone_id, msg.get("actions"), at=at,
                                   actor=msg.get("actor") or "remote")
+
         # 没应用上也要让人看得见：报告里明写「收到一条未生效的干预广播」及原因
         if ev["state"] != EV_OPEN:
             reason = f'本端该事件已是 {EV_LABEL.get(ev["state"], ev["state"])}，不再接受干预'
         else:
-            reason = "event_id 与本端该区域的事件对不上"
+            reason = (f'广播时刻 {at or "（缺时间）"} 早于本端事件开始时间 '
+                      f'{ev["startedAt"]}，对不上同一个事件')
         ev["lastRejectedIntervention"] = {
-            "at": msg.get("at") or msg.get("time") or "",
-            "actor": msg.get("actor", ""),
-            "actions": msg.get("actions", []),
-            "event_id": msg.get("event_id", ""),
-            "reason": reason,
+            "at": at, "actor": msg.get("actor", ""), "actions": msg.get("actions", []),
+            "event_id": remote_id, "reason": reason,
         }
         return None
+
+    @staticmethod
+    def _fits_event(ev: dict, at: str) -> bool:
+        """广播时刻是否落在本事件的存续区间内。
+
+        判不了就认领（缺时间、时间解析不出、或者本事件的开始时间本身就是拿
+        「收到时刻」顶替的）—— 只有两边时间都可信时，才拿时间先后挡陈旧广播。
+        """
+        dt = parse_time(at)
+        if dt is None:
+            return True
+        if not ev.get("startTimeTrusted", True):
+            return True
+        return dt.timestamp() * 1000.0 >= ev.get("startTs", 0) - 1000.0
 
     # -- CSV 历史行预填 ------------------------------------------------------
     def seed_frame(self, df) -> int:
@@ -456,15 +504,42 @@ class D3Engine:
                 "co2": _clean_num(row.get("co2")),
                 "crowdLevel": _clean_num(row.get("crowdLevel")),
                 "time": "" if _is_nan(raw_time) else str(raw_time),
+                # 稳定身份：CSV 行的去重键不能依赖「收到时刻」。time 列写坏时时间会
+                # 退回收到时刻，而它每次预填都不同 —— 那等于每刷新一次就把历史重灌一遍
+                "message_id": _csv_row_id(row, zone),
             }
-            if self.feed(f"Airguard/{zone}/data", payload, recv_at=recv_at,
-                         source="history"):
-                added += 1
+            # 单行出问题只跳过这一行：一节报告不能因为某一行脏数据整块消失
+            try:
+                if self.feed(f"Airguard-x9k2m/{zone}/data", payload, recv_at=recv_at,
+                             source="history"):
+                    added += 1
+            except Exception:                                      # noqa: BLE001
+                self.skipped += 1
         return added
 
 
 def _is_nan(v) -> bool:
-    return v is None or (isinstance(v, float) and v != v)
+    """None / NaN / NaT / pd.NA 都算「没有值」。
+
+    pandas 的 NaT 既不等于自己、也不是 float：CSV 里时间写坏时 analysis.clean()
+    会把 ts 整列变成 NaT，只认 float NaN 的话它会被当成有效时间戳传下去，
+    最终在 NaT.timestamp() 上炸掉整个 D3 板块。
+    """
+    if v is None:
+        return True
+    try:
+        return bool(v != v)
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def _csv_row_id(row, zone: str) -> str:
+    """CSV 历史行的稳定身份：只由行内容决定，与预填时刻无关。
+
+    内容完全相同的两行会被当成同一条（和实时侧按 message_id 去重同一口径）。
+    """
+    return "csv|" + "|".join(str(row.get(k)) for k in
+                             ("time", "pm25", "co2", "crowdLevel")) + "|" + zone
 
 
 def _clean_num(v):
@@ -477,177 +552,47 @@ def _clean_num(v):
 
 
 # ---------------------------------------------------------------------------
-# 3. 报告板块渲染：一整条事件流程画成时间线
+# 3. 报告板块渲染：一条事件一行 —— 谁有问题 / 采取了什么干预 / 新数据的结果
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# 3. 报告板块渲染：五步流程表
-# ---------------------------------------------------------------------------
-
-STATE_TAG = {
-    EV_OPEN: ("warn", "OPEN 待处理"),
-    EV_HANDLING: ("warn", "HANDLING 处理中"),
-    EV_RECOVERED: ("ok", "RECOVERED 已恢复"),
+RESULT_TAG = {
+    EV_OPEN: ("muted", "待处理"),
+    EV_HANDLING: ("warn", "仍需关注"),
+    EV_RECOVERED: ("ok", "已恢复"),
 }
-STATE_CLASS = {EV_OPEN: "open", EV_HANDLING: "handling", EV_RECOVERED: "recovered"}
 
-STEP_HEADS = [
-    "① 异常数据 → 优先关注",
-    "② 选择干预动作",
-    "③ 三端同步「处理中」",
-    "④ 新数据实时分析",
-    "⑤ 自动判定",
-]
+RESULT_HEADS = ["有问题的区域", "用户采取的干预措施", "后续新数据的结果"]
+MAX_ROWS = 12
 
 
-def _cell(state: str, lines: list) -> str:
-    """一个流程单元格：state 决定颜色（done 绿 / active 橙 / none 灰）"""
-    body = "<br>".join(lines)
-    return f'<td class="{state}">{body}</td>'
-
-
-def _event_card(ev: dict) -> str:
-    state = ev["state"]
-    tag_cls, tag_label = STATE_TAG.get(state, ("muted", state))
-    rd = ev["startReading"]
-    lv = LEVELS[rd["level"]]
-    ci = CROWD_LEVELS[rd["crowdLevel"]]
-    src = "CSV 历史" if rd["source"] == "history" else "实时"
-
-    # ① 异常数据
-    c1 = [f'{esc(rd["time"][11:])} · {esc(src)}',
-          f'pm25 {rd["pm25"]} / co2 {rd["co2"]}',
-          f'{esc(lv["label"])} · 人流{esc(ci["label"])} {rd["crowdLevel"]} 级',
-          f'严重度 {ev["severity"]}']
-    s1 = "done"
-
-    # ② 干预动作
-    if ev["userActions"]:
-        acts = ev["userActions"][-1]
-        c2 = [f'{esc(acts["at"][11:])} · {esc(acts["actor"])}',
-              "、".join(esc(a) for a in acts["actions"])]
-        s2 = "done"
-    else:
-        opts = ev.get("actionOptions") or []
-        c2 = ["等待提交", f'{len(opts)} 项可选',
-              "、".join(esc(o) for o in opts[:2]) + ("…" if len(opts) > 2 else "")]
-        s2 = "active" if state == EV_OPEN else "none"
-
-    # ③ 三端同步处理中
-    if ev["interventionAt"]:
-        c3 = [f'{esc(ev["interventionAt"][11:])} · 已广播',
-              f'Airguard/intervention/{esc(ev["zoneId"])}',
-              f'干预时刻严重度 {ev["severityAtIntervention"]}']
-        s3 = "done"
-    else:
-        c3 = ["— 未发生" if state == EV_OPEN else "—", "", ""]
-        s3 = "none"
-
-    # ④ 新数据实时分析
-    if ev["interventionAt"]:
-        post = [x for x in ev["log"] if x["time"] >= ev["interventionAt"]]
-        c4 = ([f'干预后 {len(post)} 条'] if post else ["— 还没等到新数据"])
-        if post:
-            last = post[-1]
-            c4 += [f'{esc(last["time"][11:])} {esc(last["note"][:14])}',
-                   f'达标样本 {len(ev["verifySamples"])} 条']
-        s4 = "done" if post else "active"
-    else:
-        c4 = ["— 未开始", "", ""]
-        s4 = "none"
-
-    # ⑤ 自动判定
-    if state == EV_RECOVERED:
-        c5 = ["已恢复", f'{esc((ev["recoveredAt"] or "")[11:])} 自动判定']
-        if ev["manualReview"]:
-            c5.append("人工复核")
-        s5 = "done"
-    elif state == EV_HANDLING:
-        c5 = [esc(ev["outcome"]), f'恶化计数 {ev["relapseSamples"]}/{EV_RELAPSE_SAMPLES}']
-        if ev["manualReview"]:
-            c5.append("人工复核")
-        s5 = "active"
-    else:
-        c5 = ["待处理", "等干预后由新数据判定", ""]
-        s5 = "none"
-
-    cells = "".join([_cell(s1, c1), _cell(s2, c2), _cell(s3, c3),
-                     _cell(s4, c4), _cell(s5, c5)])
-    heads = "".join(f"<th>{h}</th>" for h in STEP_HEADS)
-
-    reject = ev.get("lastRejectedIntervention")
-    reject_html = ""
-    if reject:
-        reject_html = (f'<p class="ev-warn">有一条干预广播没生效（{esc(reject["reason"])}）——'
-                       f'广播里的事件号 <code>{esc(str(reject["event_id"]))}</code>，'
-                       f'本端是 <code>{esc(ev["event_id"])}</code></p>')
-
-    log_rows = "".join(
-        f'<tr><td>{esc(x["time"][11:])}</td><td>{esc(x["note"])}</td>'
-        f'<td class="muted-cell">{esc(x["levelLabel"]) or "—"}</td>'
-        f'<td class="muted-cell">{"" if x["crowdLevel"] is None else x["crowdLevel"]}</td></tr>'
-        for x in reversed(ev["log"]))
-
-    return f"""      <div class="ev-card {STATE_CLASS.get(state, 'open')}">
-        <div class="ev-head">
-          <span class="tag {tag_cls}">{esc(tag_label)}</span>
-          <b>{esc(ev["zoneName"])}</b>
-          <span class="ev-type">{esc(ev["type"])}</span>
-          <span class="ev-id">{esc(ev["event_id"])}</span>
-          <span class="ev-when">{esc(ev["startedAt"])} 起</span>
-        </div>
-        <table class="ev-flow">
-          <thead><tr>{heads}</tr></thead>
-          <tbody><tr>{cells}</tr></tbody>
-        </table>
-{reject_html}
-        <details class="ev-more">
-          <summary>原始消息日志（{len(ev["log"])} 条）</summary>
-          <table class="score-table">
-            <thead><tr><th>时间</th><th>发生了什么</th><th>环境</th><th>人流</th></tr></thead>
-            <tbody>{log_rows}</tbody>
-          </table>
-        </details>
-      </div>"""
+def _event_row(ev: dict) -> str:
+    """一行就是一条事件：区域 / 干预动作 / 结果。"""
+    tag_cls, label = RESULT_TAG.get(ev["state"], ("muted", ev["state"]))
+    acts = ev["userActions"][-1]["actions"] if ev["userActions"] else []
+    acts_txt = "、".join(esc(a) for a in acts) if acts else "—"
+    return (f'      <tr><th scope="row">{esc(ev["zoneId"])}'
+            f' <small>{esc(ev["zoneName"])}</small></th>'
+            f'<td>{acts_txt}</td>'
+            f'<td><span class="tag {tag_cls}">{label}</span></td></tr>')
 
 
 def render_panel(engine: "D3Engine | None" = None, note: str = "") -> str:
-    """板块 7 的正文：五步流程表，一条事件一行。"""
+    """板块 7 的正文：一张三列表，一行一条事件。"""
     if engine is None or not engine.events:
         nodata = f'<p class="note">{esc(note)}</p>' if note else ""
         return f"""    <p class="empty">还没有事件：只有收到<b>异常数据</b>（环境非正常，
       或人流达到拥挤及以上）才会建立事件，没有异常就一直空着。</p>
 {nodata}"""
 
-    open_n = sum(1 for e in engine.events if e["state"] == EV_OPEN)
-    handling_n = sum(1 for e in engine.events if e["state"] == EV_HANDLING)
-    recovered_n = sum(1 for e in engine.events if e["state"] == EV_RECOVERED)
-    stat = (f'数据 {engine.messages} 条（CSV {engine.history_rows} · 实时 {engine.live_rows}）'
-            f' · 干预广播 {engine.interventions} 条'
-            + (f' · 重复 {engine.duplicates}' if engine.duplicates else "")
-            + (f' · 无效 {engine.rejected}' if engine.rejected else ""))
+    heads = "".join(f"<th>{h}</th>" for h in RESULT_HEADS)
+    rows = "\n".join(_event_row(ev) for ev in engine.events[:MAX_ROWS])
+    more = (f'    <p class="note">另有 {len(engine.events) - MAX_ROWS} 条较早事件未列出。</p>\n'
+            if len(engine.events) > MAX_ROWS else "")
 
-    kpis = "\n        ".join([
-        f'<div class="kpi"><div class="k">OPEN 待处理</div><div class="v">{open_n}'
-        f'<small>等选择干预动作</small></div></div>',
-        f'<div class="kpi"><div class="k">HANDLING 处理中</div><div class="v">{handling_n}'
-        f'<small>等新数据验证</small></div></div>',
-        f'<div class="kpi"><div class="k">RECOVERED 已恢复</div><div class="v">{recovered_n}'
-        f'<small>由新数据自动判定</small></div></div>',
-        f'<div class="kpi"><div class="k">事件总数</div><div class="v">{len(engine.events)}'
-        f'<small>{esc(stat)}</small></div></div>',
-    ])
-
-    cards = "\n".join(_event_card(ev) for ev in engine.events[:6])
-    more = (f'<p class="note">另有 {len(engine.events) - 6} 条较早事件未展开。</p>'
-            if len(engine.events) > 6 else "")
-
-    return f"""    <div class="kpis">
-        {kpis}
-    </div>
-    <p class="note">恢复只能由新数据自动判定（点干预按钮不会直接恢复）；干预后连续 2 条
-      严重度高于干预时刻 → 回退 OPEN。</p>
-    <h3 class="sub-head">事件流程（新的在前）</h3>
-{cards}
+    return f"""    <table class="score-table">
+      <thead><tr>{heads}</tr></thead>
+      <tbody>
+{rows}
+      </tbody>
+    </table>
 {more}"""

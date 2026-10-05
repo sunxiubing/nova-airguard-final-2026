@@ -447,7 +447,7 @@ class D5Engine:
 
     def feed(self, topic: str, payload: dict, recv_at: datetime | None = None,
              source: str = "live") -> dict | None:
-        """topic 形如 Airguard/zone-n/data；payload 为已解析的 JSON 对象。
+        """topic 形如 Airguard-x9k2m/zone-n/data；payload 为已解析的 JSON 对象。
 
         source="history" 表示这条来自 CSV 历史行（批量预填），"live" 表示实时 MQTT。
         """
@@ -536,6 +536,10 @@ class D5Engine:
                 "time": "" if raw_time is None or (isinstance(raw_time, float) and pd.isna(raw_time))
                         else str(raw_time),
                 "note": CSV_NOTE,
+                # 稳定身份：去重键不能依赖「收到时刻」。time 列写坏时 _dedupe_key
+                # 会退回收到时刻，而它每次预填都不同 —— 那等于每刷新一次就把历史重灌一遍
+                "message_id": "csv|" + "|".join(str(row.get(k)) for k in
+                                                ("time", "pm25", "co2", "crowdLevel")) + "|" + zone,
             }
             # 数值型 NaN 在 JSON 里没有对应，先转成 None，交给 validate 按「缺失」处理
             for k in ("pm25", "co2", "crowdLevel"):
@@ -547,7 +551,7 @@ class D5Engine:
                         payload[k] = float(v)
                     except (TypeError, ValueError):
                         payload[k] = None
-            if self.feed(f"Airguard/{zone}/data", payload, recv_at=recv_at, source="history"):
+            if self.feed(f"Airguard-x9k2m/{zone}/data", payload, recv_at=recv_at, source="history"):
                 added += 1
         return added
 
@@ -642,7 +646,7 @@ def render_panel(engine: "D5Engine | None" = None, mqtt_note: str = "") -> str:
     if engine is None or not engine.records:
         note = f'<p class="note">{esc(mqtt_note)}</p>' if mqtt_note else ""
         return f"""    <p class="empty">还没有收到 MQTT 报文，判定结果将在第一条
-      <code>Airguard/&lt;区域&gt;/data</code> 报文到达后自动出现（本页每秒自检一次，无需手动刷新）。</p>
+      <code>Airguard-x9k2m/&lt;区域&gt;/data</code> 报文到达后自动出现（本页每秒自检一次，无需手动刷新）。</p>
 {note}
     <p class="lead">规则与 ML 的对照会在这里同屏展示：每收到一条新数据，后台同时算出
       <b>固定规则判定</b>（pm25 / co2 绝对阈值）与 <b>轻量 ML 判定</b>（本楼栋历史分布），

@@ -14,7 +14,8 @@
                                                 → 三维沙盘（本页面）
 
   与 Web 大屏、微信小程序共用同一条实时数据流：
-      订阅主题  ws://127.0.0.1:8085   Airguard/+/data
+      Broker  wss://broker.emqx.io:8084/mqtt
+      订阅主题  Airguard-x9k2m/+/data
       报文格式  { zoneId, pm25, co2, crowdLevel, status, time }
 
   两套彼此独立的可视化组件（互不混淆）：
@@ -58,7 +59,7 @@
       </div>
       <div class="status-item">
         <span class="status-key">Broker</span>
-        <code class="status-code" id="brokerUrl">ws://127.0.0.1:8085</code>
+        <code class="status-code" id="brokerUrl">wss://broker.emqx.io:8084/mqtt</code>
       </div>
       <div class="status-item">
         <span class="status-key">最后更新时间</span>
@@ -136,7 +137,7 @@
     <div class="data-rows" id="dataRows"></div>
 
     <p class="panel-foot">
-      订阅 <code>Airguard/+/data</code> · 已收 <b id="msgCount">0</b> 条 · 串区拦截 <b id="rejectCount">0</b> 条
+      订阅 <code>Airguard-x9k2m/+/data</code> · 已收 <b id="msgCount">0</b> 条 · 串区拦截 <b id="rejectCount">0</b> 条
     </p>
   </aside>
 

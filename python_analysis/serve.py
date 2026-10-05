@@ -22,7 +22,7 @@ AirGuard 离线分析链 A —— 监视预览服务
 2. 起一个只监听 127.0.0.1 的小服务，把报告发到浏览器
 3. 每秒钟看一眼 data/history.csv 的修改时间和大小，变了就重跑分析
 4. 每导入一份新数据，先在 data/archive/ 里留一份带时间戳的副本
-5. 订阅 MQTT Airguard/+/data（D5）：每收到一条报文就立刻算「固定规则判定 /
+5. 订阅 MQTT Airguard-x9k2m/+/data（D5）：每收到一条报文就立刻算「固定规则判定 /
    轻量 ML 判定 / 是否一致 / 裁决」，写进报告的板块 6，页面自动刷新
 
 D5 与离线分析互不干扰：板块 1–5 仍然只由 data/history.csv 决定，
@@ -36,7 +36,7 @@ D5 只读历史文件当 ML 基线，**不写** data/ 下的任何内容。
 安全边界
 --------
 · 只监听 127.0.0.1，同局域网的其他机器访问不到
-· 不写 data/history.csv，只读；唯一会写的目录是 data/archive/ 和 report/
+· 不写 data/history.csv，只读；会写的目录只有 data/archive/ 和 report/
 · 关闭这个窗口（或按 Ctrl+C）就停止，不留后台进程
 ============================================================================
 """
@@ -65,8 +65,15 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 import analysis  # noqa: E402  （路径要先插好，所以放在这里）
-import d3_event  # noqa: E402
 import d5  # noqa: E402
+
+# 控制台按 GBK 打开时，日志里的 CO₂ / µg/m³ 这类字符会让 print 直接抛异常——
+# 改成「不认识的字符替换成 ?」。一行日志不该拖垮整个服务。
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:  # noqa: BLE001
+    pass
 
 CSV_PATH = analysis.CSV_PATH
 REPORT_PATH = analysis.REPORT_PATH
@@ -82,14 +89,12 @@ SETTLE_SECONDS = 0.6  # 改动后要稳定这么久才认为「复制完了」�
 # ---------------------------------------------------------------------------
 # D5：固定规则 × 轻量 ML 的实时判定
 # ---------------------------------------------------------------------------
-MQTT_HOST = "127.0.0.1"
-MQTT_PORT = 1885              # Broker 的 TCP 端口（四个端页面连的是 8085，那是 websocket）
-MQTT_TOPIC = "Airguard/+/data"
-MQTT_IV_TOPIC = "Airguard/intervention/+"   # D3：各端广播的干预动作
+MQTT_HOST = "broker.emqx.io"
+MQTT_PORT = 1883              # 公网 Broker 的 TCP 端口（四个端页面连的是 8084 的 wss）
+MQTT_TOPIC = "Airguard-x9k2m/+/data"
 MQTT_CLIENT_ID = f"airguard-d5-{os.getpid()}"
 
 D5_ENGINE = d5.D5Engine()     # 内存态：收到的每条报文算一次，不落盘
-D3_ENGINE = d3_event.D3Engine()   # D3 事件状态机（与四端同款规则）
 D5_NOTE = "MQTT 未连接"        # 状态条上显示的一句话，由订阅线程维护
 D5_DIRTY = threading.Event()  # 有新报文等着写进报告
 D5_RENDER_AT = [0.0]          # 上一次因 D5 重跑的时刻
@@ -99,7 +104,13 @@ D5_DEBOUNCE = 0.8             # 防抖：连发报文时最多 0.8 秒重跑一�
 # 共享状态：监视线程写，HTTP 线程读
 # ---------------------------------------------------------------------------
 
+SERVICE_TAG = "airguard-serve"   # 单实例识别的身份标记，见 probe_instance()
+
 STATE = {
+    # 身份三件事：启动器（VBS）与停止脚本靠它们确认「这是本服务」，不是别的程序占着端口
+    "service": SERVICE_TAG,
+    "pid": os.getpid(),
+    "startedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "version": 0,          # 每成功生成一次报告 +1，页面靠它判断要不要刷新
     "generatedAt": None,   # 报告生成时刻
     "rows": None,          # 这份报告用了多少行数据
@@ -151,7 +162,7 @@ def archive_csv(digest: str) -> str | None:
 
 
 def d5_mqtt_loop() -> None:
-    """D5：订阅 Airguard/+/data，每条报文算一次判定，然后让报告重跑。
+    """D5：订阅 Airguard-x9k2m/+/data，每条报文算一次判定，然后让报告重跑。
 
     Broker 没起来不算错误——后台一直重试就行（现场常常是先开报告页、再开 Broker）。
     收到报文只更新内存里的 D5 引擎，**不写** data/ 下的任何文件。
@@ -169,11 +180,10 @@ def d5_mqtt_loop() -> None:
         failed = getattr(reason_code, "is_failure", None)
         ok = (not failed) if failed is not None else (reason_code == 0)
         if ok:
-            client.subscribe([(MQTT_TOPIC, 1), (MQTT_IV_TOPIC, 1)])
-            log(f"D5/D3 已连接 Broker {MQTT_HOST}:{MQTT_PORT}，"
-                f"订阅 {MQTT_TOPIC} 与 {MQTT_IV_TOPIC}")
+            client.subscribe(MQTT_TOPIC, 1)
+            log(f"D5 已连接 Broker {MQTT_HOST}:{MQTT_PORT}，订阅 {MQTT_TOPIC}")
         else:
-            log(f"D5/D3 连接被 Broker 拒绝：{reason_code}")
+            log(f"D5 连接被 Broker 拒绝：{reason_code}")
 
     def on_disconnect(client, userdata, *args):
         log("D5 与 Broker 断开，后台自动重连…")
@@ -187,17 +197,8 @@ def d5_mqtt_loop() -> None:
             return
 
         topic = msg.topic or ""
-        if topic.startswith("Airguard/intervention/"):
-            # D3：别的端广播来的干预动作。event_id 对不上就只在报告里留一句说明
-            if D3_ENGINE.receive_intervention(payload) is not None:
-                log(f"D3 收到干预广播 {topic}：{payload.get('actions')}"
-                    f"（{payload.get('actor', '?')}）")
-                D5_DIRTY.set()
-            return
-
-        # 数据报文：D5（规则 × ML）与 D3（事件状态机）各算一遍，互不影响
+        # 数据报文：交给 D5 的规则 × ML 判定
         d5_rec = D5_ENGINE.feed(topic, payload)
-        D3_ENGINE.feed(topic, payload)
         if d5_rec is None:
             return                     # 串区 / 区域认不出来：丢弃，不进报告
         D5_DIRTY.set()
@@ -225,10 +226,13 @@ def d5_mqtt_loop() -> None:
                            "rejected": D5_ENGINE.rejected}
 
 
-def regenerate(reason: str, reload_analysis: bool = False) -> None:
-    """跑一次分析并更新共享状态。任何异常都吞在这里——服务不能因为一份坏 CSV 就死。"""
+def regenerate(reason: str, reload_analysis: bool = False) -> bool:
+    """跑一次分析并更新共享状态。任何异常都吞在这里——服务不能因为一份坏 CSV 就死。
+
+    返回是否真的写出了一份新报告（没抢到锁 / 分析失败都算 False，调用方据此决定要不要重试）。
+    """
     if not RUN_LOCK.acquire(blocking=False):
-        return   # 上一次还没跑完，等下一轮
+        return False   # 上一次还没跑完，等下一轮
     try:
         with STATE_LOCK:
             STATE["busy"] = True
@@ -251,21 +255,19 @@ def regenerate(reason: str, reload_analysis: bool = False) -> None:
             # 板块 6：把实时引擎交给分析链，它先用本次读到的 CSV 历史行预填（去重，重复预填不会灌两遍），
             # 再连实时报文一起渲染——所以报告一打开就有历史判定，新报文来了再往上叠
             D5_ENGINE.note = D5_NOTE
-            D3_ENGINE.note = D5_NOTE
-            info = analysis.generate_report(open_browser=False, d5_engine=D5_ENGINE,
-                                            d3_engine=D3_ENGINE)
+            info = analysis.generate_report(open_browser=False, d5_engine=D5_ENGINE)
         except SystemExit as exc:
             # analysis.die() 走的是这条路：提示已经打过了，记下状态继续盯着
             with STATE_LOCK:
                 STATE["error"] = f"分析中止（退出码 {exc.code}），详见上方提示"
                 STATE["busy"] = False
-            return
+            return False
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             with STATE_LOCK:
                 STATE["error"] = f"{type(exc).__name__}: {exc}"
                 STATE["busy"] = False
-            return
+            return False
 
         digest = sha_of_csv()
         archived = archive_csv(digest)
@@ -284,6 +286,7 @@ def regenerate(reason: str, reload_analysis: bool = False) -> None:
         log(f"完成：{info['rows']} 行 · {info['zones']} 个区域 · "
             f"{info['bytes'] / 1024:.0f} KB · 用时 {elapsed:.1f} 秒"
             + (f" · 已归档 {archived}" if archived else ""))
+        return True
     finally:
         RUN_LOCK.release()
 
@@ -436,6 +439,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # Web 大屏可能是直接用 file:// 打开的（Origin 是 null），拍照同步要走跨域。
+        # 服务只绑 127.0.0.1，不对外，放行来源没有额外风险。
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         # 报告是每次刷新都要拿最新的，一律禁缓存
         self.send_header("Cache-Control", "no-store, max-age=0")
         self.end_headers()
@@ -454,6 +462,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             with STATE_LOCK:
                 snapshot = dict(STATE)
+            # 摘要正文不往轮询里塞：页面每秒取一次，用不着全文
             self._json(snapshot)
             return
 
@@ -481,8 +490,13 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send(404, "404".encode("utf-8"), "text/plain; charset=utf-8")
 
+    def do_OPTIONS(self) -> None:
+        # 跨域预检（application/json 的 POST 会先发一条 OPTIONS），统一放行
+        self._send(204, b"", "text/plain; charset=utf-8")
+
     def do_POST(self) -> None:
-        if self.path.split("?")[0] == "/api/rerun":
+        path = self.path.split("?")[0]
+        if path == "/api/rerun":
             FORCE.set()
             log("收到手动重新分析请求")
             self._json({"ok": True})
@@ -507,7 +521,42 @@ def pick_port() -> int:
     sys.exit(1)
 
 
+def probe_instance(timeout: float = 0.6):
+    """端口范围内是不是已经有本服务在跑？返回 (port, 状态字典)，没有则 None。
+
+    只认 /api/status 里 service 字段对得上的应答——端口被别的程序占着不算「已经在跑」，
+    那种情况该由 pick_port() 顺延到下一个端口。
+    """
+    import json as _json
+    import urllib.request
+
+    for port in range(PORT_START, PORT_START + PORT_TRIES):
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/status", timeout=timeout) as resp:
+                info = _json.loads(resp.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001  连不上 / 不是 HTTP / 不是 JSON，都算「不是本服务」
+            continue
+        if isinstance(info, dict) and info.get("service") == SERVICE_TAG:
+            return port, info
+    return None
+
+
 def main() -> None:
+    # 单实例：已经在跑就别再起一个。两个实例会各自跑 watch_loop 去重写同一个
+    # report.html，还会抢同一批照片，所以宁可让后启动的这个直接退出。
+    # 放在最前面——在跑首屏报告之前就退，免得白跑一遍还覆盖掉人家刚写的报告。
+    running = probe_instance()
+    if running:
+        port, info = running
+        print(f"AirGuard 监视服务已经在运行了（端口 {port} · PID {info.get('pid')} · "
+              f"启动于 {info.get('startedAt') or '未知'}），本次不重复启动。")
+        print(f"报告地址：http://127.0.0.1:{port}/")
+        print("要停止它：运行同目录下的「停止监视.bat」。")
+        # 退出码 2 而不是 0：实时报告.bat 末尾的 `if errorlevel 1 pause` 会因此停住窗口，
+        # 让双击的人来得及看清这行提示，而不是一闪而过。
+        sys.exit(2)
+
     print("=" * 68)
     print("AirGuard 离线分析链 A —— 监视预览服务")
     print("=" * 68)

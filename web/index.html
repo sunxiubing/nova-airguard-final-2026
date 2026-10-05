@@ -15,7 +15,7 @@
                   MQTTX / python 发布端
 
   本页面不含任何写死的示例数据：启动时全部指标为空，只接收外部 MQTT 推送。
-  报文主题： Airguard/+/data        （+ 为区域通配符，如 Airguard/zone-n/data）
+  报文主题： Airguard-x9k2m/+/data        （+ 为区域通配符，如 Airguard-x9k2m/zone-n/data）
   报文格式： { zoneid, pm25, co2, crowdLevel, status, time }
              · zoneid     区域编号，与主题中的区域做双重校验
              · pm25       PM2.5 浓度，单位 μg/m³
@@ -48,7 +48,7 @@
 
     <p class="broker">
       <span class="broker-label">Broker</span>
-      <code id="brokerUrl">ws://127.0.0.1:8085</code>
+      <code id="brokerUrl">wss://broker.emqx.io:8084/mqtt</code>
     </p>
 
     <p class="clock">
@@ -68,7 +68,7 @@
 
   <!-- 运行统计：用于验证双通道校验确实在工作 -->
   <div class="stat-strip">
-    <span>订阅主题 <code>Airguard/+/data</code></span>
+    <span>订阅主题 <code>Airguard-x9k2m/+/data</code></span>
     <span>已收到消息 <b id="msgCount">0</b> 条</span>
     <span>串区拦截 <b id="rejectCount">0</b> 条</span>
     <span>上报状态与本地重算不符 <b id="statusMismatch">0</b> 条</span>
@@ -201,6 +201,25 @@
         <tbody id="trendTableBody"></tbody>
       </table>
     </div>
+
+    <!-- ==================== E2：语音 / 现场 / 朗读 ==================== -->
+    <div class="e2-toolbar" role="group" aria-label="语音与现场工具">
+      <button class="e2-btn" id="micBtn" type="button"
+              title="语音指令：查看宿舍区zone-n / 查看教学区zone-s / 查看食堂区zone-w / 记录现场 / 朗读结论">
+        <span class="e2-ico" aria-hidden="true">🎤</span>语音指令
+      </button>
+      <button class="e2-btn" id="photoBtn" type="button"
+              title="拍照记录现场：照片绑定该区域、时间与当前告警事件，存入现场记录">
+        <span class="e2-ico" aria-hidden="true">📷</span>记录现场
+      </button>
+      <button class="e2-btn" id="speakBtn" type="button"
+              title="朗读结论：播报该区域的人流维度与实时环境状态">
+        <span class="e2-ico" aria-hidden="true">🔊</span>朗读结论
+      </button>
+      <input class="e2-input" id="cmdInput" type="text" autocomplete="off"
+             placeholder="或在这里输入指令后回车" aria-label="文字指令（与语音指令等价，供语音不可用时使用）" />
+      <span class="e2-status" id="e2Status" role="status">语音指令：查看宿舍区zone-n / 查看教学区zone-s / 查看食堂区zone-w / 记录现场 / 朗读结论</span>
+    </div>
   </section>
 
   <!-- ==================== 告警事件状态列表 ==================== -->
@@ -227,7 +246,37 @@
     </div>
   </section>
 
+  <!-- ==================== 现场记录（E2：拍照留证） ==================== -->
+  <section class="panel photo-panel" aria-label="现场记录">
+    <h2 class="panel-title">
+      现场记录
+      <span class="panel-note" id="photoCount" role="status">暂无照片</span>
+    </h2>
+    <div class="photo-grid" id="photoGrid"></div>
+    <p class="empty-state" id="photoEmpty">暂无照片：点【记录现场】按钮或语音说「记录现场」，照片会绑定区域、时间与当前告警事件存在这里。</p>
+    <p class="footnote">
+      照片只存在本页内存里：本页不落盘、不上传、刷新即清空，每条可单独下载保存。
+    </p>
+  </section>
+
 </main>
+
+<!-- ==================== 拍照浮层（E2：记录现场） ==================== -->
+<div class="cam-overlay" id="camOverlay" hidden>
+  <div class="cam-box" role="dialog" aria-modal="true" aria-label="记录现场">
+    <h3 class="cam-title">记录现场</h3>
+    <p class="cam-bind" id="camBind">正在打开摄像头…</p>
+    <video id="camVideo" autoplay playsinline muted></video>
+    <canvas id="camCanvas" hidden></canvas>
+    <div class="cam-actions">
+      <button class="e2-btn e2-btn--primary" id="camShoot" type="button">拍照</button>
+      <button class="e2-btn" id="camPick" type="button" title="摄像头不可用时，改用本地图片文件当现场照片">改用本地图片</button>
+      <button class="e2-btn" id="camCancel" type="button">取消</button>
+      <input type="file" id="camFile" accept="image/*" hidden />
+    </div>
+    <p class="cam-note" id="camNote"></p>
+  </div>
+</div>
 
 <!-- mqtt.js：浏览器端 MQTT over WebSocket 客户端 -->
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>

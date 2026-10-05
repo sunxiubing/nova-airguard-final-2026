@@ -3,7 +3,7 @@
  * 三维数字孪生沙盘（map3d/main.js）
  * ----------------------------------------------------------------------------
  * 与 web/ 大屏、mobile/ 小程序共用同一条实时数据流：
- *     订阅  ws://127.0.0.1:8085   Airguard/+/data
+ *     订阅  wss://broker.emqx.io:8084/mqtt   Airguard-x9k2m/+/data
  *     报文  { zoneId, pm25, co2, crowdLevel, status, time }
  *
  * 可视化分层（彼此独立，不混淆）：
@@ -28,13 +28,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 /** MQTT 接入参数：与 web 大屏、微信小程序保持一致 */
 const MQTT_CONFIG = {
-  url: 'ws://127.0.0.1:8085',
-  topic: 'Airguard/+/data',
-  /* 干预动作的广播主题。与 Airguard/+/data 不冲突：
+  url: 'wss://broker.emqx.io:8084/mqtt',
+  topic: 'Airguard-x9k2m/+/data',
+  /* 干预动作的广播主题。与 Airguard-x9k2m/+/data 不冲突：
      后者第二层是 '+'、第三层必须是 data，而干预报文是
-     'Airguard/intervention/<zoneId>'，第三层是区域号。 */
-  interventionTopic: 'Airguard/intervention/+',
-  interventionPrefix: 'Airguard/intervention/',
+     'Airguard-x9k2m/intervention/<zoneId>'，第三层是区域号。 */
+  interventionTopic: 'Airguard-x9k2m/intervention/+',
+  interventionPrefix: 'Airguard-x9k2m/intervention/',
   qos: 0,
   keepalive: 30,
   reconnectPeriod: 3000,
@@ -412,13 +412,13 @@ const ZONE_ALIASES = {
 function deriveZoneId(raw) {
   if (raw === undefined || raw === null) return null;
   const key = String(raw).trim().toLowerCase();
-  return ZONE_ALIASES[key] || ZONE_ALIASES[key.replace(/^airguard\//, '')] || null;
+  return ZONE_ALIASES[key] || ZONE_ALIASES[key.replace(/^airguard-x9k2m\//, '')] || null;
 }
 
-/* 主题里的区域段：Airguard/zone-n/data → zone-n。
+/* 主题里的区域段：Airguard-x9k2m/zone-n/data → zone-n。
    认不出来的段（例如主题写成 zone-m）返回 null，整条报文随即被拒收。 */
 function zoneIdFromTopic(topic) {
-  const m = /^Airguard\/([^/]+)\/data$/i.exec(topic);
+  const m = /^Airguard-x9k2m\/([^/]+)\/data$/i.exec(topic);
   return m ? deriveZoneId(m[1]) : null;
 }
 
@@ -2210,7 +2210,7 @@ function connectMQTT() {
 
 /* --- 干预动作广播 ------------------------------------------------------------
  *  没有后端服务，四端的状态一致靠「各自跑同一套状态机 + 干预动作广播」达成：
- *  任何一端提交干预，都往 Airguard/intervention/<zoneId> 发一条（retain，
+ *  任何一端提交干预，都往 Airguard-x9k2m/intervention/<zoneId> 发一条（retain，
  *  这样后打开的一端也能收到当前事件的处理状态）。
  *  收端只在 event_id 与本端当前事件吻合、且状态还是 OPEN 时才应用，
  *  所以自己发出去的那条回声、以及重复到达的同一条，都是幂等的。

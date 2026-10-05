@@ -132,14 +132,22 @@ var seenSet = {};
 var eventSeq = 0;
 
 var MQTT_CONFIG = {
-  url: 'ws://127.0.0.1:8085',   // 与 Web 大屏共用同一个 Broker
-  protocol: 'mqtt',             // WebSocket 子协议；mosquitto 要求必须带上
-  topic: 'Airguard/+/data',     // + 为区域通配符
+  /* 公网 Broker（EMQX 公共服务）：四端和 MQTTX 都连它，手机在任何网络（4G/别的 WiFi）
+     都能收到数据，不再要求「手机和电脑同一局域网」。
+     注意：各端必须落在同一个 Broker 上，否则数据不互通，所以这里只放一条地址；
+     真连不上时再往 candidates 里补候选（探测逻辑仍在，超过 1 条才会启用）。 */
+  candidates: [
+    'wss://broker.emqx.io:8084/mqtt'   // 公网 WSS，path 必须是 /mqtt
+  ],
+  url: 'wss://broker.emqx.io:8084/mqtt',   // 探测命中后会被改写成实际可用的那条，状态栏显示的就是它
+  probeTimeout: 4000,           // 单个候选地址探测超时（毫秒），到点没连上就换下一个
+  protocol: 'mqtt',             // WebSocket 子协议；EMQX 要求必须带上
+  topic: 'Airguard-x9k2m/+/data',     // + 为区域通配符
   /* D3 干预广播：与数据流共用同一条连接，靠主题前缀分流。
-     Airguard/+/data 收不到它 —— 那个过滤器要求第 3 段是 data，
-     而干预主题的第 3 段是区域 ID（Airguard/intervention/zone-n） */
-  interventionTopic: 'Airguard/intervention/+',
-  interventionPrefix: 'Airguard/intervention/',
+     Airguard-x9k2m/+/data 收不到它 —— 那个过滤器要求第 3 段是 data，
+     而干预主题的第 3 段是区域 ID（Airguard-x9k2m/intervention/zone-n） */
+  interventionTopic: 'Airguard-x9k2m/intervention/+',
+  interventionPrefix: 'Airguard-x9k2m/intervention/',
   qos: 0,
   keepalive: 30,                // 秒
   reconnectPeriod: 3000         // 断线后每 3 秒重连
@@ -336,7 +344,7 @@ function deriveZoneId(raw) {
   return ZONE_ALIAS[key] || ZONE_ALIAS[key.replace(/^airguard\//, '')] || null;
 }
 
-/* 从主题里取区域段：Airguard/zone-n/data → zone-n */
+/* 从主题里取区域段：Airguard-x9k2m/zone-n/data → zone-n */
 function zoneFromTopic(topic) {
   var seg = String(topic || '').split('/');
   for (var i = 0; i < seg.length; i++) {
@@ -349,7 +357,7 @@ function zoneFromTopic(topic) {
 /* 双通道区域校验：主题段与报文 zoneId 必须指向同一区域，防止数据串区。
    任一路写了无法识别的区域、或两路互相矛盾，整条报文一律拒收；
    主题认不出区域时绝不回退到报文 zoneId —— 那正是串区报文的典型形态
-   （主题 Airguard/zone-m/data + 报文 zoneId=zone-w）。
+   （主题 Airguard-x9k2m/zone-m/data + 报文 zoneId=zone-w）。
    四端同一口径：web / 手机端 / 小程序 / 3D 沙盘。 */
 function resolveZone(topic, payload) {
   var fromTopic = zoneFromTopic(topic);
@@ -793,6 +801,8 @@ function createMqttClient(config, handlers) {
   var reconnectTimer = null;
   var closedByUser = false;
   var connected = false;
+  var probeTimer = null;        // 单个候选地址的探测超时
+  var urlIndex = 0;             // 当前在试第几个候选地址
 
   function nextPacketId() {
     packetId = (packetId % 65535) + 1;
@@ -807,6 +817,45 @@ function createMqttClient(config, handlers) {
   function clearTimers() {
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    clearProbeTimer();
+  }
+
+  /* ---------- 候选 Broker 地址探测 ----------
+     逐个试候选地址，拿到 CONNACK 的那个就算命中；都不通过就整串循环重试。
+     现在候选里只有公网 Broker 一条，探测默认不启用（多于 1 条地址才会切）。 */
+  function candidateList() {
+    return (config.candidates && config.candidates.length) ? config.candidates : [config.url];
+  }
+
+  /* 换下一个候选地址；返回 true 表示确实换了（只有一个地址时不换） */
+  function switchCandidate() {
+    var list = candidateList();
+    if (list.length < 2) return false;
+    urlIndex = (urlIndex + 1) % list.length;
+    config.url = list[urlIndex];
+    return true;
+  }
+
+  function clearProbeTimer() {
+    if (probeTimer) { clearTimeout(probeTimer); probeTimer = null; }
+  }
+
+  /* 到点还没收到 CONNACK，就认定这个地址连不上，立刻换下一个 */
+  function armProbeTimer() {
+    clearProbeTimer();
+    if (!config.probeTimeout || candidateList().length < 2) return;
+    probeTimer = setTimeout(function () {
+      probeTimer = null;
+      if (connected || closedByUser || !socket) return;
+      var wrapped = (urlIndex + 1 >= candidateList().length);
+      handlers.onState('error', wrapped
+        ? '候选地址都连不上：确认手机能上网（公网 Broker），稍后自动重试…'
+        : '连不上 ' + config.url + '，换下一个地址…');
+      try { socket.close(); } catch (e) {}
+      socket = null;
+      if (switchCandidate()) scheduleReconnect(600);   // 换地址要快，不等满重连周期
+      else scheduleReconnect();
+    }, config.probeTimeout);
   }
 
   function handlePacket(header, buf, bodyStart, packetEnd) {
@@ -817,6 +866,7 @@ function createMqttClient(config, handlers) {
       var code = buf[bodyStart + 1];
       if (code === 0) {
         connected = true;
+        clearProbeTimer();          // 已拿到 CONNACK，这个地址就是可用的，停止探测
         handlers.onState('connected');
         /* 两个主题各发一个 SUBSCRIBE：报文流 + 干预广播。
            别端的干预要让本端同时进入「处理中」，漏订阅就收敛不了 */
@@ -866,12 +916,12 @@ function createMqttClient(config, handlers) {
     rx = decodePackets(merged, handlePacket);
   }
 
-  function scheduleReconnect() {
+  function scheduleReconnect(delay) {
     if (closedByUser || reconnectTimer) return;
     reconnectTimer = setTimeout(function () {
       reconnectTimer = null;
       connect();
-    }, config.reconnectPeriod);
+    }, typeof delay === 'number' ? delay : config.reconnectPeriod);
   }
 
   function sendDisconnect() {
@@ -897,10 +947,11 @@ function createMqttClient(config, handlers) {
     rx = new Uint8Array(0);
     handlers.onState('connecting');
 
+    var s;
     try {
-      socket = wx.connectSocket({
+      s = wx.connectSocket({
         url: config.url,
-        protocols: [config.protocol],   // 不带这个子协议，mosquitto 会直接拒绝握手
+        protocols: [config.protocol],   // 不带这个子协议，EMQX 会直接拒绝握手
         timeout: 8000
       });
     } catch (e) {
@@ -909,13 +960,20 @@ function createMqttClient(config, handlers) {
       scheduleReconnect();
       return;
     }
+    socket = s;
 
-    socket.onOpen(function () {
+    /* 探测超时换地址时，旧 socket 会被关掉重开，但它的回调还会补发一次。
+       每个回调先确认「我还代表当前这条连接」，避免旧连接的回调误伤新连接 */
+    function isCurrent() { return s === socket; }
+
+    s.onOpen(function () {
+      if (!isCurrent()) return;
       connected = false;   // 等 CONNACK 才算真正连上
-      socket.send({ data: buildConnect(clientId(), config.keepalive) });
+      s.send({ data: buildConnect(clientId(), config.keepalive) });
     });
 
-    socket.onMessage(function (res) {
+    s.onMessage(function (res) {
+      if (!isCurrent()) return;
       if (res.data instanceof ArrayBuffer) {
         onBytes(res.data);
       } else if (res.data && res.data.buffer) {
@@ -923,21 +981,31 @@ function createMqttClient(config, handlers) {
       }
     });
 
-    socket.onError(function (err) {
+    s.onError(function (err) {
+      if (!isCurrent()) return;
+      var wasConnected = connected;   // 这条连接此前是否已经握手成功过
       handlers.onState('error', 'WebSocket 错误：' + (err && err.errMsg ? err.errMsg : err));
       connected = false;
-      if (socket) { try { socket.close(); } catch (e) {} socket = null; }
+      try { s.close(); } catch (e) {}
+      socket = null;
+      /* 连上过再掉线 → 地址是对的，重连同一个；压根没连上 → 换下一个候选地址 */
+      if (!closedByUser && !wasConnected && switchCandidate()) { scheduleReconnect(600); return; }
       scheduleReconnect();
     });
 
-    socket.onClose(function () {
+    s.onClose(function () {
+      if (!isCurrent()) return;
       clearTimers();
+      var wasConnected = connected;
       connected = false;
       socket = null;
       if (closedByUser) return;
       handlers.onState('closed');
+      if (!wasConnected && switchCandidate()) { scheduleReconnect(600); return; }
       scheduleReconnect();
     });
+
+    armProbeTimer();
   }
 
   function clientId() {
@@ -945,7 +1013,13 @@ function createMqttClient(config, handlers) {
   }
 
   return {
-    start: function () { closedByUser = false; connect(); },
+    /* 启动（含手动重连）时，从第一个候选地址重新扫一遍 */
+    start: function () {
+      closedByUser = false;
+      urlIndex = 0;
+      config.url = candidateList()[0];
+      connect();
+    },
     stop: function () { closedByUser = true; close(true); handlers.onState('closed'); },
     isConnected: function () { return connected; },
     /* 小程序切后台可能被系统断开，回到前台时补一次连接 */

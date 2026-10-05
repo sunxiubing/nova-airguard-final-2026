@@ -272,7 +272,8 @@ code { font-family: var(--mono); }
     "priority priority"
     "events   events"
     "zones    heat"
-    "trend    alerts";
+    "trend    alerts"
+    "photo    photo";
   gap: var(--gap);
   padding: var(--gap) 24px 28px;
   align-items: start;
@@ -285,6 +286,7 @@ code { font-family: var(--mono); }
 .heat-panel     { grid-area: heat; }
 .trend-panel    { grid-area: trend; }
 .alert-panel    { grid-area: alerts; }
+.photo-panel    { grid-area: photo; }
 
 .panel {
   background: var(--surface);
@@ -976,7 +978,7 @@ code { font-family: var(--mono); }
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "kpi" "priority" "events" "zones" "heat" "trend" "alerts";
+    grid-template-areas: "kpi" "priority" "events" "zones" "heat" "trend" "alerts" "photo";
   }
   .zone-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
   .kpi-row { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
@@ -994,9 +996,186 @@ code { font-family: var(--mono); }
   .stat-value { font-size: 26px; }
 }
 
+/* ==================== E2：语音指令 / 记录现场 / 朗读结论 ==================== */
+
+.e2-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--grid);
+}
+
+.e2-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.e2-btn:hover { background: var(--surface-2); border-color: var(--series-1); color: var(--series-1); }
+.e2-btn:active { transform: translateY(1px); }
+.e2-btn:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.e2-btn[disabled] { color: var(--ink-muted); cursor: not-allowed; }
+.e2-btn[disabled]:hover { background: var(--surface); border-color: var(--border); color: var(--ink-muted); }
+.e2-btn--primary {
+  background: var(--series-1);
+  border-color: var(--series-1);
+  color: #fff;
+}
+.e2-btn--primary:hover { background: #1f63b8; border-color: #1f63b8; color: #fff; }
+.e2-ico { font-size: 14px; line-height: 1; }
+
+/* 正在收音：红色脉冲。与「语音选中区域」的蓝色光环是两回事 */
+.e2-btn.is-listening {
+  color: var(--status-critical);
+  border-color: var(--status-critical);
+  background: #fdf3f3;
+  animation: e2-pulse 1.1s ease-in-out infinite;
+}
+.e2-btn.is-listening:hover { color: var(--status-critical); border-color: var(--status-critical); }
+@keyframes e2-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(208, 59, 59, .42); }
+  55%      { box-shadow: 0 0 0 8px rgba(208, 59, 59, 0); }
+}
+
+.e2-input {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  width: 230px;
+  max-width: 100%;
+}
+.e2-input::placeholder { color: var(--ink-muted); }
+.e2-input:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+
+.e2-status {
+  font-size: 12px;
+  color: var(--ink-muted);
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+/* 语音选中的区域卡片：蓝色光环 + 徽章文字，与「优先关注」的告警色不冲突，可同时出现 */
+.zone-card.is-voice {
+  border-color: var(--series-1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-1) 26%, transparent),
+              0 10px 26px color-mix(in srgb, var(--series-1) 14%, transparent);
+}
+.voice-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--series-1);
+}
+
+/* ---- 现场记录：照片卡 ---- */
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.photo-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.photo-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--surface-2);
+}
+.photo-meta { display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; }
+.photo-zone { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 650; }
+.photo-zone .zone-code { font-size: 10.5px; }
+.photo-line {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.photo-line b { color: var(--ink-2); font-weight: 600; }
+.photo-dl { font-size: 11.5px; color: var(--series-1); text-decoration: none; }
+.photo-dl:hover { text-decoration: underline; }
+.photo-dl:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+/* ---- 拍照浮层 ---- */
+.cam-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(11, 11, 11, .55);
+}
+.cam-overlay[hidden] { display: none; }
+.cam-box {
+  width: min(560px, 100%);
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.cam-title { margin: 0 0 6px; font-size: 15px; }
+.cam-bind { margin: 0 0 10px; font-size: 12.5px; color: var(--ink-2); }
+.cam-box video {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+.cam-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.cam-note { margin: 8px 0 0; min-height: 16px; font-size: 11.5px; color: var(--ink-muted); }
+
+/* ---- 底部临时提示条 ---- */
+.e2-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  z-index: 60;
+  max-width: min(600px, 92vw);
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(11, 11, 11, .88);
+  color: #fff;
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity .18s;
+  pointer-events: none;
+}
+.e2-toast.is-on { opacity: 1; }
+
 /* 强制颜色模式（高对比/打印）：保证状态与色阶不依赖颜色单独表意 */
 @media (forced-colors: active) {
-  .panel, .zone-card, .stat { border: 1px solid CanvasText; }
+  .panel, .zone-card, .stat, .photo-card { border: 1px solid CanvasText; }
   .heat-cell { border: 1px solid CanvasText; forced-color-adjust: none; }
   .meter-fill { forced-color-adjust: none; }
 }

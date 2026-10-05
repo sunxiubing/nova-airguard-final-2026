@@ -25,7 +25,7 @@ D5 要求：规则与 ML 两种判据并列，不一致时要留下一个「值�
     python d5_publish.py --all            三个区域各发一条同样的读数
 
 不发的话也可以手动发：把脚本打印的 JSON 原样粘到 MQTTX 的
-Airguard/<区域>/data 主题上，效果一样。
+Airguard-x9k2m/<区域>/data 主题上，效果一样。
 ============================================================================
 """
 
@@ -50,9 +50,9 @@ sys.path.insert(0, str(BASE_DIR))
 
 import d5  # noqa: E402
 
-HOST = "127.0.0.1"
-PORT = 1885
-TOPIC = "Airguard/{zone}/data"
+HOST = "broker.emqx.io"
+PORT = 1883
+TOPIC = "Airguard-x9k2m/{zone}/data"
 
 # 兜底候选：基线算不出合适组合时按这个顺序试（历史数据一变，取值可能要跟着变）
 FALLBACK = [

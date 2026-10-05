@@ -17,7 +17,8 @@
                   MQTTX / python 发布端
 
   本页面与 Web 大屏共用同一条实时数据流：
-      订阅主题  ws://127.0.0.1:8085   Airguard/+/data
+      Broker  wss://broker.emqx.io:8084/mqtt
+      订阅主题  Airguard-x9k2m/+/data
       报文格式  { zoneId, pm25, co2, crowdLevel, status, time }
 
   本页面不含任何写死的示例数据：启动时卡片为空，只接收外部 MQTT 推送。
@@ -90,7 +91,7 @@
   <!-- 清空记录后的一次性回执，由 script.js 填充；无回执时保持 hidden -->
   <p class="foot-note" id="restoreNote" hidden></p>
   <p class="foot-row">
-    <span>订阅 <code>Airguard/+/data</code></span>
+    <span>订阅 <code>Airguard-x9k2m/+/data</code></span>
     <span>已收 <b id="msgCount">0</b> 条</span>
     <span>串区拦截 <b id="rejectCount">0</b> 条</span>
   </p>

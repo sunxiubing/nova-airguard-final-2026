@@ -1049,41 +1049,7 @@ h3.sub-head { margin: 26px 0 0; font-size: 14px; }
 }
 .perception-table .muted-cell { color: #898781; }
 footer.page { color: #898781; font-size: 12px; text-align: center; padding-top: 6px; }
-
-/* ---- 板块 7：D3 事件五步流程表 ---- */
-.ev-card {
-  border: 1px solid #e6e8eb; border-left: 4px solid #fab219; border-radius: 10px;
-  padding: 12px 14px 8px; margin: 14px 0 0; background: #fcfcfb;
-}
-.ev-card.handling { border-left-color: #e08b21; background: #fffaf2; }
-.ev-card.recovered { border-left-color: #26a177; background: #f6fbf8; }
-.ev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.ev-head b { font-size: 14px; }
-.ev-type { color: #52514e; font-size: 12.5px; }
-.ev-id { color: #898781; font-size: 11.5px; font-family: Consolas, "Courier New", monospace; }
-.ev-when { color: #898781; font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
-table.ev-flow { width: 100%; border-collapse: collapse; table-layout: fixed; }
-table.ev-flow th {
-  font-size: 12px; font-weight: 600; color: #52514e; text-align: left;
-  padding: 6px 8px; background: #f4f5f3; border: 1px solid #e9eae7;
-}
-table.ev-flow td {
-  font-size: 12.2px; line-height: 1.55; padding: 7px 8px; vertical-align: top;
-  border: 1px solid #e9eae7; color: #3f3f3c;
-}
-table.ev-flow td.done { background: #f3faf4; }
-table.ev-flow td.active { background: #fff6e9; }
-table.ev-flow td.none { color: #a8a7a2; background: #fbfbfa; }
-.ev-warn { margin: 8px 0 0; color: #b45309; font-size: 12.2px; }
-.ev-card code {
-  background: #f2f4f3; padding: 1px 6px; border-radius: 5px;
-  font-size: 11.8px; font-family: Consolas, "Courier New", monospace;
-}
-.ev-more { margin-top: 8px; }
-.ev-more summary { cursor: pointer; color: #898781; font-size: 12.3px; }
-.ev-more .score-table { margin-top: 8px; }
 """
-
 
 def build_priority(priority: dict) -> str:
     """板块5 主体：三区域得分表 + 最近感知记录表。"""
@@ -1138,8 +1104,8 @@ def build_perception(rows: list) -> str:
     </table>"""
 
 
-def build_html(df, stats, quality, charts, generated_at, d5_panel: str = "",
-               d3_panel: str = "") -> str:
+def build_html(df, stats, quality, charts, generated_at,
+               d5_panel: str = "") -> str:
     zones = stats["zones"]
     n_abn = len(stats["abnormal"])
     focus = stats["focus"]
@@ -1309,14 +1275,6 @@ def build_html(df, stats, quality, charts, generated_at, d5_panel: str = "",
 {d5_panel}
   </section>
 
-  <section class="card" id="sec7">
-    <h2><span class="num">7</span>D3 干预—验证—恢复：事件全流程（实时）</h2>
-    <p class="lead">每条事件一行五步：①异常数据→优先关注 ②选择干预动作 ③三端同步「处理中」
-      ④收新数据实时分析 ⑤自动判定。绿色=已完成，橙色=进行中，灰色=未发生。
-      随 MQTT 数据实时更新，状态机与四端逐字同款。</p>
-{d3_panel}
-  </section>
-
   <footer class="page">本报告由 python_analysis/analysis.py 自动生成 · 所有图表与结论均基于当前 CSV 实时计算</footer>
 </div>
 </body>
@@ -1332,7 +1290,7 @@ _ENV_PRINTED = False
 
 
 def generate_report(open_browser: bool = True, d5_panel: "str | None" = None,
-                    d5_engine=None, d3_engine=None) -> dict:
+                    d5_engine=None) -> dict:
     """跑完整条分析链：data/history.csv ──► report/report.html。
 
     open_browser=False 供 serve.py 常驻调用——它自己管浏览器，
@@ -1407,25 +1365,10 @@ def generate_report(open_browser: bool = True, d5_panel: "str | None" = None,
             print(f"      D5 板块跳过：{type(exc).__name__}: {exc}")
             d5_panel = '    <p class="empty">D5 模块不可用，本节暂缺。</p>'
 
-    # 板块 7：D3 事件全流程。历史行同样先批量灌一遍，实时数据与干预广播再往上叠
-    try:
-        import d3_event
-
-        d3 = d3_engine if d3_engine is not None else d3_event.D3Engine()
-        added = d3.seed_frame(df)
-        if d3_engine is None:
-            d3.note = (f"离线模式：事件由 data/history.csv 的 {len(df)} 行历史数据重建"
-                       f"（本次新处理 {added} 条），不依赖 Broker")
-        print(f"      D3 历史行预填 {added} 条 · 事件 {len(d3.events)} 个"
-              f"（OPEN {sum(1 for e in d3.events if e['state'] == 'OPEN')}）")
-        d3_panel = d3_event.render_panel(d3, d3.note)
-    except Exception as exc:  # noqa: BLE001
-        print(f"      D3 板块跳过：{type(exc).__name__}: {exc}")
-        d3_panel = '    <p class="empty">D3 模块不可用，本节暂缺。</p>'
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(
         build_html(df, stats, quality, charts, started.strftime("%Y-%m-%d %H:%M:%S"),
-                   d5_panel, d3_panel),
+                   d5_panel),
         encoding="utf-8",
     )
     size_kb = REPORT_PATH.stat().st_size / 1024
